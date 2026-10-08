@@ -1,6 +1,7 @@
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, toast, confirmDialog } from '../../utils.js';
+import { getLimit, showLimitGate } from '../entitlements.js';
 
 const state = {
   members: [],
@@ -93,7 +94,18 @@ function paint(root) {
       }, 'Refresh'),
       el('button', {
         class: 'px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold',
-        onclick: () => openInviteModal(root),
+        onclick: () => {
+          const limit = getLimit('staff');
+          const active = state.members.filter(m => m.is_active).length;
+          if (active >= limit) {
+            showLimitGate('staff', active, limit, () => {
+              document.querySelectorAll('.fixed.inset-0').forEach(el => el.remove());
+              location.hash = '#billing-upgrade';
+            });
+            return;
+          }
+          openInviteModal(root);
+        },
       }, '+ Invite Staff'),
     ]),
   ]);

@@ -20,6 +20,11 @@ import { renderTemplateAdmin } from './modules/admin/template-admin.js';
 import { buildOutletSwitcher } from './modules/outlet-switcher.js';
 import { startMonitoring, buildConnectionBadge, openQueueModal, sync } from './modules/offline-sync.js';
 import { renderCustomerDisplay } from './modules/customer-display.js';
+import { renderSignup } from './modules/signup.js';
+import { renderSuperAdmin } from './modules/admin/super-admin.js';
+import { renderBillingUpgrade } from './modules/admin/billing-upgrade.js';
+import { loadEntitlements, buildPlanBadge, maybeTrialBanner, isReadOnly, isTrialExpiringSoon, isTrialExpired } from './modules/entitlements.js';
+import { navigate as navTo } from './router.js';
 import { loadCatalog } from './modules/menu.js';
 
 function renderLogin(root) {
@@ -56,7 +61,14 @@ function renderLogin(root) {
   card.appendChild(email);
   card.appendChild(pass);
   card.appendChild(btn);
-  card.appendChild(el('div', { class: 'text-xs text-slate-400 text-center mt-4' }, 'Contact admin if you cannot sign in'));
+  card.appendChild(el('div', { class: 'text-center mt-5 pt-5 border-t border-slate-100' }, [
+    el('span', { class: 'text-xs text-slate-500' }, 'New here? '),
+    el('a', {
+      href: '#signup',
+      class: 'text-sm font-semibold text-indigo-600 hover:text-indigo-800',
+      onclick: (e) => { e.preventDefault(); location.hash = '#signup'; location.reload(); },
+    }, 'Create your restaurant →'),
+  ]));
   wrap.appendChild(card);
   root.appendChild(wrap);
   setTimeout(() => email.focus(), 50);
@@ -135,6 +147,8 @@ function renderShell(root) {
     }, '🖥️ Display'));
   }
 
+  const trialBanner = maybeTrialBanner(() => navigate('billing-upgrade'));
+
   const topbar = el('div', { class: 'flex items-center justify-between px-4 py-2 bg-slate-900 text-white overflow-x-auto' }, [
     el('div', { class: 'flex items-center gap-3 shrink-0' }, [
       el('span', { class: 'font-semibold text-base' }, store.state.tenant?.name || CONFIG.APP_NAME),
@@ -144,6 +158,13 @@ function renderShell(root) {
       ...navBtns,
       el('span', { class: 'text-slate-300 hidden lg:inline ml-2' }, store.state.profile?.full_name || store.state.session?.user?.email || ''),
       el('span', { class: 'px-2 py-0.5 rounded-full bg-indigo-600 text-[10px] uppercase font-semibold tracking-wide' }, store.state.member?.role || ''),
+      (store.state.profile?.is_super_admin
+        ? el('button', {
+            class: 'px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs font-bold whitespace-nowrap',
+            onclick: () => navigate('super-admin'),
+          }, '🛡 Super')
+        : null),
+      buildPlanBadge(() => navigate('billing-upgrade')),
       buildConnectionBadge(() => openQueueModal()),
       el('button', {
         class: 'text-slate-300 hover:text-white text-xs ml-2',
@@ -155,6 +176,7 @@ function renderShell(root) {
   const view = el('div', { id: 'app-view', class: 'flex-1 min-h-0' });
 
   shell.appendChild(topbar);
+  if (trialBanner) shell.appendChild(trialBanner);
   shell.appendChild(view);
   root.appendChild(shell);
 
@@ -173,11 +195,35 @@ function renderShell(root) {
   register('loyalty-admin', renderLoyaltyAdmin);
   register('template-admin', renderTemplateAdmin);
   register('customer-display', renderCustomerDisplay);
+  register('signup', renderSignup);
+  register('super-admin', renderSuperAdmin);
+  register('billing-upgrade', renderBillingUpgrade);
   initRouter('dashboard');
 }
 
 async function boot() {
   const root = $('#app');
+
+  // ---- Public signup route (no login required) ----
+  if (location.hash === '#signup' || location.hash === '#login') {
+    if (location.hash === '#signup') {
+      await renderSignup(root);
+    } else {
+      // Render login (fallback if hash present but session is gone)
+      const session = await getSession();
+      if (session) {
+        const ctx = await loadContext();
+        if (ctx?.member) {
+          await loadCatalog();
+          await loadOpenShift();
+          renderShell(root);
+          return;
+        }
+      }
+      renderLogin(root);
+    }
+    return;
+  }
 
   // ---- Public QR self-order route (no login required) ----
   if (location.hash.startsWith('#order')) {

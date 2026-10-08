@@ -1,6 +1,7 @@
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, fmtMoney, toast, confirmDialog } from '../../utils.js';
+import { getLimit, showLimitGate } from '../entitlements.js';
 
 const state = {
   tab: 'items',
@@ -88,7 +89,18 @@ function paint(root) {
       }, 'Refresh'),
       el('button', {
         class: 'px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold',
-        onclick: () => openItemEditor(root, null),
+        onclick: () => {
+          const limit = getLimit('items');
+          const active = state.items.filter(i => i.is_active).length;
+          if (active >= limit) {
+            showLimitGate('menu items', active, limit, () => {
+              document.querySelectorAll('.fixed.inset-0').forEach(el => el.remove());
+              location.hash = '#billing-upgrade';
+            });
+            return;
+          }
+          openItemEditor(root, null);
+        },
       }, '+ New Item'),
     ]),
   ]);

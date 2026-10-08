@@ -6,6 +6,7 @@ import { saveInvoiceAndPayments } from './invoice.js';
 import { buildReceiptData, buildReceiptText, buildReceiptHTML } from './receipt.js';
 import { publishThankYou, publishIdle } from './customer-display.js';
 import { isOnline, queuePayment } from './offline-sync.js';
+import { hasFeature, showUpgradeGate } from './entitlements.js';
 import {
   buildReceiptBytes, printHTML, printUSB, printSerial, printViaBridge,
   connectUSB, connectSerial, checkBridge, isUSBConnected, isSerialConnected,
@@ -809,9 +810,22 @@ async function showSuccessScreen(result, orderId) {
     onclick: () => { navigator.clipboard.writeText(buildReceiptText(data)).then(() => toast('Receipt copied', 'success')); },
   }, 'Copy Text'));
 
+  // WhatsApp — gated by plan feature
+  const waEnabled = hasFeature('whatsapp');
   actions.appendChild(el('button', {
-    class: `py-2.5 rounded-lg text-sm font-medium ${data.customer.phone ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`,
+    class: `py-2.5 rounded-lg text-sm font-medium ${
+      !waEnabled ? 'bg-slate-100 text-slate-400'
+      : data.customer.phone ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+    }`,
     onclick: async (e) => {
+      if (!waEnabled) {
+        showUpgradeGate('WhatsApp receipts', () => {
+          document.querySelectorAll('.fixed.inset-0').forEach(el => el.remove());
+          location.hash = '#billing-upgrade';
+        });
+        return;
+      }
       if (!data.customer.phone) { toast('No phone on file', 'warn'); return; }
       const btn = e.currentTarget;
       btn.disabled = true;
@@ -827,7 +841,7 @@ async function showSuccessScreen(result, orderId) {
       } catch (err) { console.error(err); toast('Failed: ' + err.message, 'error'); }
       finally { btn.disabled = false; }
     },
-  }, 'WhatsApp'));
+  }, waEnabled ? 'WhatsApp' : 'WhatsApp 🔒'));
 
   card.appendChild(actions);
 
