@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RestoPOS</title>
+  <script>
+    (function () {
+      var path = window.location.pathname.replace(/^\/resto/, '') || '/';
+      var hash = window.location.hash;
+      var search = window.location.search;
+      window.location.replace('/resto/index.html?path=' + encodeURIComponent(path + search + hash));
+    })();
+  </script>
+</head>
+<body>Redirecting…</body>
+</html>
