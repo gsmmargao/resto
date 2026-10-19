@@ -1,6 +1,7 @@
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
 import { toast } from '../utils.js';
+import { printKOT } from './printer.js';
 import { isOnline, queueOrder } from './offline-sync.js';
 
 const ORDER_STATUS_VALUES  = new Set(['draft','open','in_kitchen','partially_ready','ready','served','billed','paid','partially_paid','cancelled','refunded','merged']);
@@ -121,7 +122,11 @@ export async function sendKOT() {
     .from('order_items').insert(itemRows).select();
   if (iErr) { toast('Order items failed: ' + iErr.message, 'error'); console.error(iErr); return null; }
 
-  newItems.forEach(l => { l._saved = true; });
+  newItems.forEach((l, i) => {
+    l._saved = true;
+    l._dbId = insertedItems[i]?.id;
+    l.status = 'sent_to_kitchen';
+  });
   window.dispatchEvent(new CustomEvent('cart:changed'));
 
   const byStation = new Map();
@@ -161,11 +166,80 @@ export async function sendKOT() {
     const { error: kiErr } = await supabase.from('kot_items').insert(kotItemsPayload);
     if (kiErr) { toast('KOT items failed: ' + kiErr.message, 'error'); continue; }
     kotSuccess++;
+
+    // --- AUTO PRINT KOT ---
+    // We run this without awaiting so it doesn't block the UI if the printer is slow
+    printKOT({
+      kot: kot,
+      items: items,
+      tableName: tableRow?.name || null,
+      waiterName: member?.display_name || null,
+      orderType: cart.orderType
+    }).catch(err => console.error('Print error:', err));
   }
 
   await supabase.rpc('recalc_order', { p_order_id: orderId });
 
   if (kotSuccess === 0) { toast('Order saved but no KOT created', 'warn'); return null; }
   toast(kotSuccess + ' KOT' + (kotSuccess > 1 ? 's' : '') + ' sent to kitchen', 'success');
+  return orderId;
+}
+
+export async function saveDraft() {
+  const cart = store.state.cart;
+  const outlet = store.state.outlet;
+  const tenant = store.state.tenant;
+  const member = store.state.member;
+
+  if (!cart.items.length) { toast('Cart is empty', 'warn'); return null; }
+  if (cart.orderType === 'dine_in' && !cart.tableId) { toast('Select a table first', 'warn'); return null; }
+
+  const tableRow = store.state.tables.find(t => t.id === cart.tableId);
+  let orderId = cart.orderId;
+
+  if (!orderId) {
+    const { data: orderNo, error: seqErr } = await supabase.rpc('next_doc_number', { p_outlet: outlet.id, p_doc_type: 'order' });
+    if (seqErr || !orderNo) { toast('Order numbering failed', 'error'); return null; }
+
+    const payload = {
+      tenant_id: tenant.id, outlet_id: outlet.id, order_number: orderNo,
+      order_type: cart.orderType, source: 'pos', status: 'open',
+      table_id: cart.tableId || null, table_name_snapshot: tableRow?.name || null,
+      guest_count: Number(cart.guestCount) || 1,
+      waiter_id: member?.id || null, cashier_id: member?.id || null,
+      created_by: store.state.session?.user?.id || null,
+    };
+
+    const { data: order, error } = await supabase.from('orders').insert(payload).select().single();
+    if (error) { toast('Order insert failed: ' + error.message, 'error'); return null; }
+    orderId = order.id;
+    store.state.cart.orderId = orderId;
+  }
+
+  const newItems = cart.items.filter(l => !l._saved);
+  if (!newItems.length) { toast('No new items to save', 'warn'); return null; }
+
+  const itemRows = newItems.map(l => ({
+    tenant_id: tenant.id, outlet_id: outlet.id, order_id: orderId,
+    menu_item_id: l.menuItemId, variant_id: l.variantId,
+    name_snapshot: l.name, variant_name: l.variantName,
+    quantity: Number(l.qty), unit_price: Number(l.unitPrice),
+    tax_rate: Number(l.taxRate), tax_inclusive: !!l.taxInclusive,
+    status: 'pending', station_id: l.stationId || null, notes: l.notes || null,
+    created_by: store.state.session?.user?.id || null,
+  }));
+
+  const { data: insertedItems, error: iErr } = await supabase.from('order_items').insert(itemRows).select();
+  if (iErr) { toast('Order items failed: ' + iErr.message, 'error'); return null; }
+
+  newItems.forEach((l, i) => {
+    l._saved = true;
+    l._dbId = insertedItems[i]?.id;
+    l.status = 'pending';
+  });
+  window.dispatchEvent(new CustomEvent('cart:changed'));
+
+  await supabase.rpc('recalc_order', { p_order_id: orderId });
+  toast('Order held successfully', 'success');
   return orderId;
 }

@@ -66,6 +66,7 @@ export async function loadOrderIntoCart(orderId) {
     name: it.name_snapshot, variantName: it.variant_name,
     qty: Number(it.quantity), unitPrice: Number(it.unit_price),
     taxRate: Number(it.tax_rate), taxInclusive: !!it.tax_inclusive,
+      status: it.status,
     stationId: it.station_id, addons: [], notes: it.notes,
   }));
 
@@ -84,14 +85,24 @@ export async function loadOrderIntoCart(orderId) {
 
 function _computeTotals(cart) {
   let gross = 0, taxable = 0, tax = 0;
+  const isGst = store.state.tenant?.settings?.is_gst_enabled !== false;
+
   (cart.items || []).forEach(l => {
     const lineGross = l.qty * l.unitPrice;
     gross += lineGross;
-    if (l.taxInclusive) {
-      const base = lineGross / (1 + l.taxRate);
-      taxable += base; tax += lineGross - base;
+    
+    if (!isGst) {
+      // Non-GST: Tax is 0, everything is taxable
+      taxable += lineGross;
+      tax += 0;
     } else {
-      taxable += lineGross; tax += lineGross * l.taxRate;
+      // GST mode
+      if (l.taxInclusive) {
+        const base = lineGross / (1 + l.taxRate);
+        taxable += base; tax += lineGross - base;
+      } else {
+        taxable += lineGross; tax += lineGross * l.taxRate;
+      }
     }
   });
   let discountAmount = 0;
@@ -112,7 +123,7 @@ function _computeTotals(cart) {
 
 export function recalcCart() { _computeTotals(store.state.cart); notifyCartChanged(); }
 
-export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTable }) {
+export function renderCartPanel(root, { onCheckout, onSendKOT, onSaveDraft, onClear, onPickTable }) {
   root.innerHTML = '';
   const cart = store.state.cart;
   const t = cart.totals || { gross:0, taxable:0, tax:0, discount:0, serviceCharge:0, roundOff:0, grand:0 };
@@ -172,6 +183,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
         else onClear();
       },
     }, cart.orderId ? 'Discard New Items' : 'Clear Cart'),
+
     el('button', {
       class: `col-span-2 py-2.5 rounded-lg text-sm font-semibold transition ${hasNewItems ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
       onclick: () => { if (hasNewItems) onSendKOT(); },
@@ -187,11 +199,23 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 
 function buildLine(l) {
   const isSaved = !!l._saved;
-  return el('div', { class: `px-3 py-2 border-b border-slate-200 ${isSaved ? 'bg-slate-100/60' : 'bg-white'}` }, [
+  const isSent = ['sent_to_kitchen', 'preparing', 'ready', 'served'].includes(l.status);
+  const canVoid = ['owner', 'admin', 'manager'].includes(store.state.member?.role);
+
+  let badge = null;
+  if (isSaved) {
+    badge = isSent 
+      ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wide shrink-0' }, 'SENT')
+      : el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold uppercase tracking-wide shrink-0' }, 'HELD');
+  }
+
+  return el('div', {
+    class: `px-3 py-2 border-b border-slate-200 ${isSaved ? 'bg-slate-100/60' : 'bg-white'}`,
+  }, [
     el('div', { class: 'flex justify-between items-start gap-2' }, [
       el('div', { class: 'flex-1 min-w-0' }, [
         el('div', { class: 'flex items-center gap-1.5 mb-0.5' }, [
-          isSaved ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wide shrink-0' }, 'Sent') : null,
+          badge,
           el('span', { class: 'text-sm font-medium text-slate-800 truncate' }, l.name),
         ].filter(Boolean)),
         l.variantName ? el('div', { class: 'text-xs text-slate-500' }, l.variantName) : null,
@@ -200,7 +224,13 @@ function buildLine(l) {
       el('div', { class: 'text-sm font-semibold text-slate-800 shrink-0' }, fmtMoney(l.qty * l.unitPrice)),
     ]),
     isSaved
-      ? el('div', { class: 'mt-1 text-[10px] text-slate-400 italic' }, `Fired • Qty ${l.qty} (locked)`)
+      ? el('div', { class: 'mt-1 flex items-center justify-between' }, [
+          el('div', { class: 'text-[10px] text-slate-400 italic' }, `Qty ${l.qty} (locked)`),
+          (canVoid && l._dbId) ? el('button', { 
+            class: 'text-[10px] font-bold text-red-500 hover:text-red-700 underline', 
+            onclick: () => voidSavedItem(l) 
+          }, 'Void Item') : null,
+        ])
       : el('div', { class: 'mt-1.5 flex items-center justify-between' }, [
           el('div', { class: 'flex items-center gap-1' }, [
             el('button', { class: 'w-6 h-6 rounded border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs', onclick: () => updateQty(l.id, l.qty - 1) }, '−'),
@@ -210,4 +240,70 @@ function buildLine(l) {
           el('button', { class: 'text-xs text-red-500 hover:text-red-700', onclick: () => removeLine(l.id) }, 'Remove'),
         ]),
   ]);
+}
+
+// ============================================================
+// VOID ITEM MODAL
+// ============================================================
+async function voidSavedItem(l) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4' });
+  
+  card.appendChild(el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Void Item'));
+  card.appendChild(el('p', { class: 'text-sm text-slate-600' }, `Are you sure you want to remove ${l.qty}x ${l.name} from the order?`));
+  
+  const reasonIn = el('select', { class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-red-500' }, [
+    el('option', { value: 'Customer changed mind' }, 'Customer changed mind'),
+    el('option', { value: 'Out of stock' }, 'Out of stock'),
+    el('option', { value: 'Wrong item punched' }, 'Wrong item punched'),
+    el('option', { value: 'Quality issue' }, 'Quality issue'),
+    el('option', { value: 'Other' }, 'Other')
+  ]);
+  
+  const notesIn = el('input', { type: 'text', placeholder: 'Additional notes (optional)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-red-500' });
+
+  card.appendChild(el('label', { class: 'block text-xs font-medium text-slate-600 mt-2 mb-1' }, 'Reason *'));
+  card.appendChild(reasonIn);
+  card.appendChild(notesIn);
+
+  const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' }, [
+    el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Cancel'),
+    el('button', {
+      class: 'py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-sm',
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true; btn.textContent = 'Voiding…';
+        
+        const finalReason = notesIn.value.trim() 
+          ? `${reasonIn.value} - ${notesIn.value.trim()}` 
+          : reasonIn.value;
+
+        try {
+          const { error } = await supabase.rpc('void_order_item', { 
+            p_item_id: l._dbId, 
+            p_reason: finalReason 
+          });
+          if (error) throw error;
+          
+          toast('Item voided successfully', 'success');
+          overlay.remove();
+          
+          // Remove from local cart state
+          const cart = store.state.cart;
+          cart.items = cart.items.filter(item => item.id !== l.id);
+          _computeTotals(cart);
+          notifyCartChanged();
+          
+        } catch (err) {
+          console.error(err);
+          toast('Failed: ' + err.message, 'error');
+          btn.disabled = false; btn.textContent = 'Void Item';
+        }
+      }
+    }, 'Confirm Void')
+  ]);
+  card.appendChild(btnRow);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
 }

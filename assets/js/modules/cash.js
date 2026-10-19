@@ -10,18 +10,46 @@ let cashChannel = null;
 export async function loadOpenShift() {
   const outletId = store.state.outlet?.id;
   if (!outletId) { store.set('cashRegister', null); return null; }
+
   try {
-    const { data, error } = await supabase
+    // 1. Try to find the current open shift
+    let { data: openShift, error } = await supabase
       .from('cash_registers').select('*').eq('outlet_id', outletId)
-      .eq('status', 'open').order('opened_at', { ascending: false })
-      .limit(1).maybeSingle();
+      .eq('status', 'open').order('opened_at', { ascending: false }).limit(1).maybeSingle();
+
     if (error) throw error;
-    store.set('cashRegister', data || null);
-    return data;
+
+    if (openShift) {
+      store.set('cashRegister', openShift);
+      return openShift;
+    }
+
+    // 2. If no open shift exists, look for the last closed shift to get the carried-over cash
+    let { data: lastClosed } = await supabase
+      .from('cash_registers').select('counted_cash').eq('outlet_id', outletId)
+      .eq('status', 'closed').order('closed_at', { ascending: false }).limit(1).maybeSingle();
+
+    const openingBalance = lastClosed?.counted_cash || 0;
+
+    // 3. Auto-create a new shift
+    let { data: newShift, error: createErr } = await supabase.from('cash_registers').insert({
+      tenant_id: store.state.tenant.id,
+      outlet_id: outletId,
+      shift_name: `Shift ${new Date().toLocaleDateString('en-IN')}`,
+      opened_by: store.state.member?.id || null,
+      opening_balance: openingBalance,
+      status: 'open'
+    }).select().single();
+
+    if (createErr) throw createErr;
+
+    store.set('cashRegister', newShift);
+    return newShift;
+
   } catch (err) {
-    console.warn('[cash] loadOpenShift failed (offline?)', err.message || err);
-    // Don't null out the store on network failure — the POS might still be usable
-    return store.state.cashRegister || null;
+    console.error('[cash] Auto-open shift failed', err);
+    store.set('cashRegister', null);
+    return null;
   }
 }
 
@@ -93,6 +121,8 @@ export async function openShift({ openingBalance, shiftName, notes }) {
 export async function addCashMovement({ type, amount, reason }) {
   const shift = store.state.cashRegister;
   if (!shift) throw new Error('No open shift');
+  
+  // 1. Record in cash_movements (for the drawer math)
   const { error } = await supabase.from('cash_movements').insert({
     tenant_id: store.state.tenant?.id,
     outlet_id: store.state.outlet?.id,
@@ -101,6 +131,18 @@ export async function addCashMovement({ type, amount, reason }) {
     reason: reason || null, created_by: store.state.member?.id || null,
   });
   if (error) throw error;
+
+  // 2. If it's a tip payout, also record in tip_payouts (for the Tips Ledger)
+  if (type === 'tip_payout') {
+    await supabase.from('tip_payouts').insert({
+      tenant_id: store.state.tenant.id,
+      outlet_id: store.state.outlet.id,
+      amount: Number(amount),
+      payment_mode: 'cash',
+      staff_name: reason || 'Staff',
+      created_by: store.state.session?.user?.id || null
+    });
+  }
 }
 
 export async function closeShift({ countedCash, notes }) {
@@ -111,6 +153,7 @@ export async function closeShift({ countedCash, notes }) {
   const expected = computeExpectedCash(shift, totals, movements);
   const difference = Math.round((Number(countedCash) - expected) * 100) / 100;
 
+  // 1. Close the current shift
   const { data, error } = await supabase.from('cash_registers').update({
     closed_by: store.state.member?.id || null,
     closed_at: new Date().toISOString(),
@@ -122,6 +165,17 @@ export async function closeShift({ countedCash, notes }) {
     status: 'closed', notes: notes || shift.notes,
   }).eq('id', shift.id).select().single();
   if (error) throw error;
+
+  // 2. Auto-open the NEXT shift using the counted cash as the opening balance
+  await supabase.from('cash_registers').insert({
+    tenant_id: store.state.tenant.id,
+    outlet_id: store.state.outlet.id,
+    shift_name: `Shift ${new Date().toLocaleDateString('en-IN')}`,
+    opened_by: store.state.member?.id || null,
+    opening_balance: Number(countedCash),
+    status: 'open'
+  });
+
   store.set('cashRegister', null);
   return { shift: data, totals, movements, expected, difference };
 }
@@ -138,14 +192,15 @@ export async function renderCash(root) {
 
   const shift = store.state.cashRegister;
 
-  if (!shift) {
-    inner.appendChild(renderNoShiftPanel(root));
-    inner.appendChild(await renderHistoryPanel());
-  } else {
+  if (shift) {
     inner.appendChild(await renderActiveShiftPanel(root, shift));
     inner.appendChild(await renderMovementsPanel(root, shift));
-    inner.appendChild(await renderHistoryPanel());
+  } else {
+    inner.appendChild(el('div', { class: 'bg-red-50 text-red-600 p-6 rounded-xl border border-red-200 text-center font-medium' }, 
+      'Could not load or open a cash shift. Please check your database connection.'));
   }
+
+  inner.appendChild(await renderHistoryPanel());
 
   wrap.appendChild(inner);
   root.appendChild(wrap);

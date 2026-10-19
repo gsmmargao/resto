@@ -66,6 +66,13 @@ async function ensureTenant() {
 
   console.log('[auth] ensureTenant for', user.email);
 
+  // Fallback Super Admin check (in case loadContext missed it)
+  const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', user.id).maybeSingle();
+  if (profile?.is_super_admin) {
+    console.log('[auth] ensureTenant bypassed — user is super admin');
+    return null;
+  }
+
   // Already has a membership?
   const { count, error: cErr } = await supabase
     .from('tenant_members')

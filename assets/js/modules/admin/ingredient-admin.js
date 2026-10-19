@@ -229,75 +229,21 @@ function openIngredientEditor(root, ing) {
 
   const body = el('div', { class: 'p-5 space-y-4' });
 
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
-    field('Name *', el('input', {
-      type: 'text', value: draft.name, placeholder: 'e.g. Amul Butter 500g',
-      class: inputCls, oninput: e => { draft.name = e.target.value; },
-    })),
-    field('SKU', el('input', {
-      type: 'text', value: draft.sku || '', class: inputCls,
-      oninput: e => { draft.sku = e.target.value; },
-    })),
-  ]));
+  body.appendChild(field('Item Name *', el('input', {
+    type: 'text', value: draft.name, placeholder: 'e.g. Amul Butter 500g',
+    class: inputCls, oninput: e => { draft.name = e.target.value; },
+  })));
 
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
-    field('Category', el('select', {
-      class: inputCls, onchange: e => { draft.category_id = e.target.value || null; },
-    }, [
-      el('option', { value: '' }, '— none —'),
-      ...state.categories.map(c => el('option', { value: c.id, selected: draft.category_id === c.id ? true : null }, c.name)),
-    ])),
-    field('Unit *', el('select', {
-      class: inputCls, onchange: e => { draft.unit_id = e.target.value || null; },
-    }, [
-      el('option', { value: '' }, '— select —'),
-      ...state.units.map(u => el('option', { value: u.id, selected: draft.unit_id === u.id ? true : null }, `${u.name} (${u.abbreviation})`)),
-    ])),
-  ]));
+  // Filter units to just the most common ones (kg, g, ltr, nos)
+  const commonUnits = state.units.filter(u => ['kg', 'g', 'ltr', 'nos', 'l', 'pc'].includes(u.abbreviation.toLowerCase()));
+  const unitList = commonUnits.length > 0 ? commonUnits : state.units;
 
-  body.appendChild(el('div', { class: 'grid grid-cols-3 gap-3' }, [
-    field('Current cost (₹)', el('input', {
-      type: 'number', step: '0.01', min: 0, value: draft.avg_cost,
-      class: inputCls, oninput: e => { draft.avg_cost = Number(e.target.value || 0); },
-    })),
-    field('Min stock', el('input', {
-      type: 'number', step: '0.001', min: 0, value: draft.min_stock,
-      class: inputCls, oninput: e => { draft.min_stock = Number(e.target.value || 0); },
-    })),
-    field('Max stock', el('input', {
-      type: 'number', step: '0.001', min: 0, value: draft.max_stock ?? '',
-      class: inputCls, oninput: e => { draft.max_stock = e.target.value ? Number(e.target.value) : null; },
-    })),
-  ]));
-
-  body.appendChild(el('div', { class: 'grid grid-cols-3 gap-3' }, [
-    field('Reorder qty', el('input', {
-      type: 'number', step: '0.001', min: 0, value: draft.reorder_qty ?? '',
-      class: inputCls, oninput: e => { draft.reorder_qty = e.target.value ? Number(e.target.value) : null; },
-    })),
-    field('Storage type', el('select', {
-      class: inputCls, onchange: e => { draft.storage_type = e.target.value; },
-    }, ['dry','chilled','frozen','ambient'].map(t =>
-      el('option', { value: t, selected: draft.storage_type === t ? true : null }, t)))),
-    field('Shelf life (days)', el('input', {
-      type: 'number', min: 0, value: draft.shelf_life_days ?? '',
-      class: inputCls, oninput: e => { draft.shelf_life_days = e.target.value ? Number(e.target.value) : null; },
-    })),
-  ]));
-
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
-    field('Barcode', el('input', {
-      type: 'text', value: draft.barcode || '', class: inputCls,
-      oninput: e => { draft.barcode = e.target.value; },
-    })),
-    field('Batch tracking', el('label', { class: 'flex items-center gap-2 h-10' }, [
-      el('input', {
-        type: 'checkbox', checked: draft.is_batch_tracked ? true : null,
-        onchange: e => { draft.is_batch_tracked = e.target.checked; },
-      }),
-      el('span', { class: 'text-sm text-slate-700' }, 'Track expiry per batch'),
-    ])),
-  ]));
+  body.appendChild(field('Unit *', el('select', {
+    class: inputCls, onchange: e => { draft.unit_id = e.target.value || null; },
+  }, [
+    el('option', { value: '' }, '— select unit —'),
+    ...unitList.map(u => el('option', { value: u.id, selected: draft.unit_id === u.id ? true : null }, `${u.name} (${u.abbreviation})`)),
+  ])));
 
   card.appendChild(body);
 
@@ -344,20 +290,13 @@ function openIngredientEditor(root, ing) {
       const payload = {
         tenant_id: tenantId,
         name: draft.name.trim(),
-        sku: draft.sku?.trim() || null,
-        barcode: draft.barcode?.trim() || null,
-        category_id: draft.category_id || null,
         unit_id: draft.unit_id,
-        purchase_unit_id: draft.purchase_unit_id || null,
-        conversion_factor: Number(draft.conversion_factor) || 1,
-        avg_cost: Number(draft.avg_cost) || 0,
-        min_stock: Number(draft.min_stock) || 0,
-        max_stock: draft.max_stock,
-        reorder_qty: draft.reorder_qty,
-        storage_type: draft.storage_type || 'dry',
-        shelf_life_days: draft.shelf_life_days,
-        is_batch_tracked: !!draft.is_batch_tracked,
-        is_active: draft.is_active !== false,
+        is_active: true,
+        // Defaults for simplified form
+        avg_cost: 0,
+        min_stock: 0,
+        storage_type: 'dry',
+        is_batch_tracked: false
       };
 
       if (isNew) {

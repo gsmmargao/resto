@@ -1,4 +1,6 @@
 import { supabase } from '../../supabase-client.js';
+import { CONFIG } from '../../../../config.js';
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { store } from '../../store.js';
 import { el, fmtMoney, fmtRelative, toast, confirmDialog } from '../../utils.js';
 
@@ -46,10 +48,16 @@ function paint(root) {
       el('h1', { class: 'text-lg font-bold text-slate-800' }, '🛡 Super Admin'),
       el('p', { class: 'text-xs text-slate-500' }, `${state.tenants.length} tenant${state.tenants.length !== 1 ? 's' : ''} on the platform`),
     ]),
-    el('button', {
-      class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium',
-      onclick: async (e) => { const b = e.currentTarget; b.disabled = true; await refresh(); paint(root); toast('Refreshed', 'success', 1000); b.disabled = false; },
-    }, 'Refresh'),
+    el('div', { class: 'flex items-center gap-2' }, [
+      el('button', {
+        class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium',
+        onclick: async (e) => { const b = e.currentTarget; b.disabled = true; await refresh(); paint(root); toast('Refreshed', 'success', 1000); b.disabled = false; },
+      }, 'Refresh'),
+      el('button', {
+        class: 'px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow',
+        onclick: () => openAddTenantModal(root),
+      }, '+ New Tenant'),
+    ]),
   ]);
 
   const body = el('div', { class: 'flex-1 overflow-y-auto p-4 md:p-6' });
@@ -229,6 +237,7 @@ function renderDetailPanel(root, t) {
   infoGrid.appendChild(infoBlock('Plan', t.plan_code || '—', `Trial ends ${t.trial_ends_at ? new Date(t.trial_ends_at).toLocaleDateString('en-IN') : '—'}`));
   infoGrid.appendChild(infoBlock('Created', new Date(t.created_at).toLocaleDateString('en-IN'), fmtRelative(t.created_at) + ' ago'));
   infoGrid.appendChild(infoBlock('Status', t.status.toUpperCase(), `Since ${new Date(t.created_at).toLocaleDateString('en-IN')}`));
+  infoGrid.appendChild(infoBlock('Billing Mode', t.is_gst_enabled ? 'GST Enabled' : 'Non-GST', t.is_gst_enabled ? 'Taxes applied' : 'No taxes'));
   card.appendChild(infoGrid);
 
   // Actions
@@ -294,6 +303,50 @@ function renderDetailPanel(root, t) {
         }, p))),
   ]));
 
+  // Reset Password
+  actions.appendChild(el('div', {}, [
+    el('div', { class: 'text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide' }, 'Security'),
+    el('button', {
+      class: 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-white hover:bg-slate-900 transition',
+      onclick: async () => {
+        let email = t.owner_email;
+        
+        // Only prompt if email is truly missing
+        if (!email || email.trim() === '') {
+          const input = prompt('Enter the owner\'s email address:');
+          if (input === null) return; // Cancelled
+          email = input.trim();
+          
+          // Robust Regex Check
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailRegex.test(email)) { 
+            toast('Please enter a valid email (e.g. owner@gmail.com)', 'warn'); 
+            return; 
+          }
+        }
+
+        const newPass = prompt('Enter a new password for ' + email + ' (min 8 chars):');
+        if (newPass === null) return; // Cancelled
+        if (newPass.length < 8) { toast('Password must be at least 8 characters', 'warn'); return; }
+        
+        try {
+          const { error } = await supabase.rpc('admin_set_owner_password', { 
+            p_tenant_id: t.id, 
+            p_new_password: newPass,
+            p_override_email: t.owner_email ? null : email
+          });
+          if (error) throw error;
+          
+          toast('Password created and account linked successfully!', 'success');
+          await refresh();
+          paint(root);
+        } catch (err) {
+          toast('Failed: ' + err.message, 'error');
+        }
+      },
+    }, '🔑 Reset Owner Password'),
+  ]));
+
   // Extend trial
   actions.appendChild(el('div', {}, [
     el('div', { class: 'text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide' }, 'Extend Trial'),
@@ -319,6 +372,57 @@ function renderDetailPanel(root, t) {
         }, `+${d} days`))),
   ]));
 
+  // GST Toggle
+  actions.appendChild(el('div', { class: 'mt-4 pt-4 border-t border-slate-200' }, [
+    el('div', { class: 'text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide' }, 'Billing Mode'),
+    el('button', {
+      class: `px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm ${t.is_gst_enabled ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`,
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          const newState = !t.is_gst_enabled;
+          const { error } = await supabase.rpc('admin_toggle_gst', { p_tenant_id: t.id, p_enabled: newState });
+          if (error) throw error;
+          toast(`Switched to ${newState ? 'GST' : 'Non-GST'} billing`, 'success');
+          await refresh();
+          state.selected = state.tenants.find(x => x.id === t.id);
+          paint(root);
+        } catch (err) {
+          toast('Failed: ' + err.message, 'error');
+          btn.disabled = false;
+        }
+      },
+    }, t.is_gst_enabled ? '🟢 GST Enabled (Click to Disable)' : '⚪ Non-GST Mode (Click to Enable GST)'),
+  ]));
+
+  // Danger Zone (Delete Tenant)
+  actions.appendChild(el('div', { class: 'mt-8 pt-6 border-t border-red-200' }, [
+    el('div', { class: 'text-xs font-semibold text-red-600 mb-2 uppercase tracking-wide' }, 'Danger Zone'),
+    el('button', {
+      class: 'px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600 text-white hover:bg-red-700 transition shadow-sm',
+      onclick: async () => {
+        const confirmText = prompt(`Type "DELETE" to permanently remove ${t.name} and the owner's login account.\n\nThis cannot be undone.`);
+        if (confirmText !== 'DELETE') { 
+          toast('Deletion cancelled', 'info'); 
+          return; 
+        }
+        
+        try {
+          const { error } = await supabase.rpc('admin_delete_tenant', { p_tenant_id: t.id });
+          if (error) throw error;
+          
+          toast('Tenant deleted permanently.', 'success');
+          state.selected = null;
+          await refresh();
+          paint(root);
+        } catch (err) {
+          toast('Failed to delete: ' + err.message, 'error');
+        }
+      },
+    }, '🗑️ Delete Tenant'),
+  ]));
+
   card.appendChild(actions);
   return card;
 }
@@ -329,4 +433,79 @@ function infoBlock(label, value, sub = '') {
     el('div', { class: 'text-sm font-semibold text-slate-800 mt-1 truncate' }, String(value)),
     sub ? el('div', { class: 'text-[10px] text-slate-400 mt-0.5 truncate' }, String(sub)) : null,
   ].filter(Boolean));
+}
+
+// ============================================================
+// NEW TENANT MODAL
+// ============================================================
+function openAddTenantModal(root) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-md p-6' });
+
+  card.appendChild(el('h3', { class: 'font-bold text-lg text-slate-800 mb-4' }, 'Add New Tenant'));
+  card.appendChild(el('p', { class: 'text-xs text-slate-500 mb-4' }, 'This will create the restaurant and send a pending invite to the email below. They must sign up using that email to activate their account.'));
+
+  const nameIn = el('input', { type: 'text', placeholder: 'Restaurant Name', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-3' });
+  const emailIn = el('input', { type: 'email', placeholder: 'owner@email.com', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-3' });
+  const passIn = el('input', { type: 'text', placeholder: 'Set Password (min 8 chars)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-3 font-mono' });
+  const cityIn = el('input', { type: 'text', placeholder: 'City (optional)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-3' });
+  const phoneIn = el('input', { type: 'text', placeholder: 'Phone (optional)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm mb-6' });
+
+  card.appendChild(nameIn);
+  card.appendChild(emailIn);
+  card.appendChild(passIn);
+  card.appendChild(cityIn);
+  card.appendChild(phoneIn);
+
+  const btnRow = el('div', { class: 'grid grid-cols-2 gap-2' }, [
+    el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium', onclick: () => overlay.remove() }, 'Cancel'),
+    el('button', {
+      class: 'py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold',
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        const name = nameIn.value.trim();
+        const email = emailIn.value.trim().toLowerCase();
+        if (!name || !email) { toast('Name and Email are required', 'warn'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Creating...';
+
+        try {
+          const password = passIn.value.trim();
+          if (password.length < 8) throw new Error('Password must be at least 8 characters');
+
+          // Create the user in the background using a secondary client
+          const tempClient = createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
+            auth: { persistSession: false, autoRefreshToken: false }
+          });
+
+          const { data: authData, error: authErr } = await tempClient.auth.signUp({
+            email: email,
+            password: password,
+          });
+          if (authErr) throw authErr;
+
+          const { error } = await supabase.rpc('admin_create_tenant_with_user', {
+            p_name: name, p_email: email, p_user_id: authData.user.id, p_city: cityIn.value.trim(), p_phone: phoneIn.value.trim()
+          });
+          if (error) throw error;
+          
+          toast('Tenant created successfully!', 'success');
+          overlay.remove();
+          await refresh();
+          paint(root);
+        } catch (err) {
+          console.error(err);
+          toast('Failed: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = 'Create Tenant';
+        }
+      },
+    }, 'Create Tenant'),
+  ]);
+  card.appendChild(btnRow);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  setTimeout(() => nameIn.focus(), 50);
 }

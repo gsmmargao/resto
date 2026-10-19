@@ -1,7 +1,6 @@
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, toast, confirmDialog } from '../../utils.js';
-import { getLimit, showLimitGate } from '../entitlements.js';
 
 const state = {
   members: [],
@@ -18,12 +17,9 @@ const ROLES = [
   { id: 'admin',       label: 'Admin',        color: 'bg-red-100 text-red-700',       desc: 'Manage everything except billing' },
   { id: 'manager',     label: 'Manager',      color: 'bg-amber-100 text-amber-700',   desc: 'Day-to-day operations, reports' },
   { id: 'cashier',     label: 'Cashier',      color: 'bg-emerald-100 text-emerald-700', desc: 'POS, billing, shift management' },
-  { id: 'waiter',      label: 'Waiter',       color: 'bg-sky-100 text-sky-700',       desc: 'Table orders, KOT firing' },
+  { id: 'waiter',      label: 'Waiter',       color: 'bg-sky-100 text-sky-700',       desc: 'Table orders, KOT firing (no billing)' },
   { id: 'chef',        label: 'Chef',         color: 'bg-orange-100 text-orange-700', desc: 'Kitchen display, KOT status' },
-  { id: 'store_keeper',label: 'Store Keeper', color: 'bg-indigo-100 text-indigo-700', desc: 'Inventory, purchase, wastage' },
-  { id: 'accountant',  label: 'Accountant',   color: 'bg-slate-200 text-slate-700',   desc: 'Financial reports, reconciliation' },
-  { id: 'marketing',   label: 'Marketing',    color: 'bg-pink-100 text-pink-700',     desc: 'Campaigns, loyalty, customer data' },
-  { id: 'viewer',      label: 'Viewer',       color: 'bg-slate-100 text-slate-600',   desc: 'Read-only access' },
+  { id: 'store_keeper',label: 'Store Keeper', color: 'bg-indigo-100 text-indigo-700', desc: 'Inventory, physical stock counts' },
 ];
 
 const roleMeta = (id) => ROLES.find(r => r.id === id) || { label: id, color: 'bg-slate-100 text-slate-600', desc: '' };
@@ -46,16 +42,9 @@ async function loadAll() {
   const tenantId = store.state.tenant.id;
 
   const [memRes, outRes, moRes] = await Promise.all([
-    supabase.from('tenant_members')
-      .select('*')
-      .eq('tenant_id', tenantId)
-      .order('created_at', { ascending: false }),
-    supabase.from('outlets')
-      .select('id, name, code, is_active')
-      .eq('tenant_id', tenantId)
-      .order('name'),
-    supabase.from('member_outlets')
-      .select('member_id, outlet_id'),
+    supabase.from('tenant_members').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false }),
+    supabase.from('outlets').select('id, name, code, is_active').eq('tenant_id', tenantId).order('name'),
+    supabase.from('member_outlets').select('member_id, outlet_id'),
   ]);
 
   state.members = memRes.data || [];
@@ -94,19 +83,8 @@ function paint(root) {
       }, 'Refresh'),
       el('button', {
         class: 'px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold',
-        onclick: () => {
-          const limit = getLimit('staff');
-          const active = state.members.filter(m => m.is_active).length;
-          if (active >= limit) {
-            showLimitGate('staff', active, limit, () => {
-              document.querySelectorAll('.fixed.inset-0').forEach(el => el.remove());
-              location.hash = '#billing-upgrade';
-            });
-            return;
-          }
-          openInviteModal(root);
-        },
-      }, '+ Invite Staff'),
+        onclick: () => openCreateStaffModal(root),
+      }, '+ Create Staff'),
     ]),
   ]);
 
@@ -122,9 +100,6 @@ function paint(root) {
   inner.appendChild(renderMemberList(root));
 }
 
-// ============================================================
-// SUMMARY
-// ============================================================
 function renderSummary() {
   const active = state.members.filter(m => m.is_active);
   const inactive = state.members.filter(m => !m.is_active);
@@ -148,9 +123,6 @@ function kpi(label, value, gradient, sub = '') {
   ].filter(Boolean));
 }
 
-// ============================================================
-// FILTER BAR
-// ============================================================
 function renderFilterBar(root) {
   const bar = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap gap-2 items-center' });
 
@@ -160,31 +132,26 @@ function renderFilterBar(root) {
     oninput: (e) => { state.search = e.target.value.toLowerCase(); paint(root); },
   }));
 
-  const roleSel = el('select', {
+  bar.appendChild(el('select', {
     class: 'px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
     onchange: (e) => { state.roleFilter = e.target.value; paint(root); },
   }, [
     el('option', { value: 'all' }, 'All roles'),
     ...ROLES.map(r => el('option', { value: r.id, selected: state.roleFilter === r.id ? true : null }, r.label)),
-  ]);
-  bar.appendChild(roleSel);
+  ]));
 
-  const statSel = el('select', {
+  bar.appendChild(el('select', {
     class: 'px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
     onchange: (e) => { state.statusFilter = e.target.value; paint(root); },
   }, [
     el('option', { value: 'active',   selected: state.statusFilter === 'active'   ? true : null }, 'Active only'),
     el('option', { value: 'inactive', selected: state.statusFilter === 'inactive' ? true : null }, 'Inactive only'),
     el('option', { value: 'all',      selected: state.statusFilter === 'all'      ? true : null }, 'All'),
-  ]);
-  bar.appendChild(statSel);
+  ]));
 
   return bar;
 }
 
-// ============================================================
-// MEMBER LIST
-// ============================================================
 function renderMemberList(root) {
   const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
   card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
@@ -222,9 +189,7 @@ function buildMemberCard(member, root) {
   const meta = roleMeta(member.role);
   const initial = (member.display_name || member.role || '?').charAt(0).toUpperCase();
   const outletIds = state.memberOutlets.get(member.id) || new Set();
-  const outletNames = [...outletIds]
-    .map(id => state.outlets.find(o => o.id === id)?.name)
-    .filter(Boolean);
+  const outletNames = [...outletIds].map(id => state.outlets.find(o => o.id === id)?.name).filter(Boolean);
 
   const card = el('div', { class: `bg-white rounded-xl border ${member.is_active ? 'border-slate-200' : 'border-dashed border-red-300 opacity-70'} overflow-hidden hover:shadow-md transition` });
 
@@ -234,12 +199,10 @@ function buildMemberCard(member, root) {
       el('div', { class: 'flex-1 min-w-0' }, [
         el('div', { class: 'flex items-center gap-2' }, [
           el('div', { class: 'font-semibold text-slate-800 truncate' }, member.display_name || 'Unnamed'),
-          member.pin_hash ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold shrink-0' }, 'PIN') : null,
-        ].filter(Boolean)),
+        ]),
         el('div', { class: `mt-1 inline-block text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide ${meta.color}` }, meta.label),
         member.phone || member.employee_code
-          ? el('div', { class: 'text-[11px] text-slate-500 mt-1.5 truncate' },
-              [member.phone, member.employee_code].filter(Boolean).join(' · '))
+          ? el('div', { class: 'text-[11px] text-slate-500 mt-1.5 truncate' }, [member.phone, member.employee_code].filter(Boolean).join(' · '))
           : null,
       ].filter(Boolean)),
     ]),
@@ -267,161 +230,101 @@ function buildMemberCard(member, root) {
         paint(root);
       },
     }, member.is_active ? '● ACTIVE' : '○ INACTIVE'),
-
-    el('div', { class: 'flex items-center gap-1' }, [
-      el('button', {
-        class: 'text-[10px] px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-medium',
-        onclick: (e) => { e.stopPropagation(); openMemberEditor(root, member); },
-      }, 'Edit'),
-    ]),
+    el('button', {
+      class: 'text-[10px] px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-medium',
+      onclick: (e) => { e.stopPropagation(); openMemberEditor(root, member); },
+    }, 'Edit'),
   ]);
   card.appendChild(foot);
   return card;
 }
 
 // ============================================================
-// INVITE MODAL
+// CREATE STAFF MODAL
 // ============================================================
-function openInviteModal(root) {
+function openCreateStaffModal(root) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-start md:items-center justify-center p-4 overflow-y-auto' });
   const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-lg my-8' });
 
   card.appendChild(el('div', { class: 'px-5 py-4 border-b border-slate-200 flex items-center justify-between' }, [
-    el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Invite Staff Member'),
+    el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Create Staff Account'),
     el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none', onclick: () => overlay.remove() }, '×'),
   ]));
 
   const body = el('div', { class: 'p-5 space-y-4' });
 
   const emailIn = el('input', { type: 'email', placeholder: 'staff@example.com', class: inputCls });
+  const passIn  = el('input', { type: 'text',  placeholder: 'Set Password (min 6 chars)', class: inputCls + ' font-mono' });
   const nameIn  = el('input', { type: 'text',  placeholder: 'Full name',            class: inputCls });
   const phoneIn = el('input', { type: 'tel',   placeholder: '+91 98765 43210',      class: inputCls });
-  const codeIn  = el('input', { type: 'text',  placeholder: 'Employee code (e.g. EMP001)', class: inputCls });
-
+  
   const roleSel = el('select', { class: inputCls },
     ROLES.map(r => el('option', { value: r.id, selected: r.id === 'waiter' ? true : null }, r.label)));
 
   body.appendChild(el('div', {}, [label('Email *'), emailIn]));
+  body.appendChild(el('div', {}, [label('Password *'), passIn]));
+  
   body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
     el('div', {}, [label('Full name'), nameIn]),
     el('div', {}, [label('Phone'),     phoneIn]),
   ]));
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
-    el('div', {}, [label('Employee code'), codeIn]),
-    el('div', {}, [label('Role *'),        roleSel]),
-  ]));
-
-  // Outlet access
-  const outletGrid = el('div', { class: 'space-y-1.5 pt-2 border-t border-slate-100' }, [
-    label('Outlet access'),
-    el('p', { class: 'text-[11px] text-slate-500 mb-2' }, 'Leave all unchecked to grant access to every outlet.'),
-  ]);
-  const outletChecks = new Map();
-  state.outlets.forEach(o => {
-    const cb = el('input', { type: 'checkbox', class: 'mt-0.5' });
-    outletChecks.set(o.id, cb);
-    outletGrid.appendChild(el('label', { class: 'flex items-start gap-2 text-sm text-slate-700 cursor-pointer py-1' }, [
-      cb,
-      el('span', {}, o.name + (o.is_active ? '' : ' (inactive)')),
-    ]));
-  });
-  body.appendChild(outletGrid);
+  
+  body.appendChild(el('div', {}, [label('Role *'), roleSel]));
 
   card.appendChild(body);
 
   const footer = el('div', { class: 'px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 rounded-b-2xl' }, [
     el('button', { class: 'px-4 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium', onclick: () => overlay.remove() }, 'Cancel'),
     el('button', {
-      id: 'btn-invite',
+      id: 'btn-create-staff',
       class: 'px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow',
-    }, 'Send Invite'),
+    }, 'Create Account'),
   ]);
   card.appendChild(footer);
 
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 
-  footer.querySelector('#btn-invite').addEventListener('click', async (e) => {
+  footer.querySelector('#btn-create-staff').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     const email = emailIn.value.trim().toLowerCase();
+    const password = passIn.value.trim();
+    
     if (!email) { toast('Email is required', 'warn'); return; }
+    if (password.length < 6) { toast('Password must be at least 6 characters', 'warn'); return; }
 
     btn.disabled = true;
-    btn.textContent = 'Sending…';
+    btn.textContent = 'Creating…';
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await supabase.functions.invoke('invite-staff', {
-        body: {
-          email,
-          full_name:     nameIn.value.trim(),
-          phone:         phoneIn.value.trim(),
-          employee_code: codeIn.value.trim(),
-          role:          roleSel.value,
-          outlet_ids:    [...outletChecks.entries()].filter(([, cb]) => cb.checked).map(([id]) => id),
-          tenant_id:     store.state.tenant.id,
-        },
-        headers: { Authorization: `Bearer ${session?.access_token || ''}` },
+      const { error } = await supabase.rpc('admin_create_staff', {
+        p_email: email,
+        p_password: password,
+        p_name: nameIn.value.trim() || 'Staff',
+        p_phone: phoneIn.value.trim() || null,
+        p_role: roleSel.value
       });
+      
+      if (error) throw error;
 
-      if (res.error) {
-        // Fallback: create a shell member without an auth user
-        console.warn('[invite] edge function unavailable:', res.error);
-        const fallback = await createMemberWithoutAuth({
-          email,
-          name: nameIn.value.trim(),
-          phone: phoneIn.value.trim(),
-          code: codeIn.value.trim(),
-          role: roleSel.value,
-          outletIds: [...outletChecks.entries()].filter(([, cb]) => cb.checked).map(([id]) => id),
-        });
-        if (!fallback) throw new Error('Could not create member');
-      }
-
-      toast('Staff member added', 'success');
+      toast('Staff account created successfully!', 'success');
       overlay.remove();
       await refresh();
       paint(root);
     } catch (err) {
       console.error(err);
-      toast('Invite failed: ' + (err.message || err), 'error');
+      toast('Failed: ' + (err.message || err), 'error');
       btn.disabled = false;
-      btn.textContent = 'Send Invite';
+      btn.textContent = 'Create Account';
     }
   });
 }
 
-async function createMemberWithoutAuth({ email, name, phone, code, role, outletIds }) {
-  // Insert into tenant_members directly. user_id will be null until they sign up
-  // and a DB trigger links it by email match.
-  const tenantId = store.state.tenant.id;
-
-  const { data, error } = await supabase.from('tenant_members').insert({
-    tenant_id:     tenantId,
-    user_id:       null,
-    role:          role,
-    display_name:  name || null,
-    phone:         phone || null,
-    employee_code: code || null,
-    is_active:     true,
-  }).select().single();
-
-  if (error) { toast('Insert failed: ' + error.message, 'error'); return null; }
-
-  if (outletIds.length) {
-    await supabase.from('member_outlets').insert(
-      outletIds.map(id => ({ member_id: data.id, outlet_id: id })),
-    );
-  }
-  return data;
-}
-
 // ============================================================
-// EDIT MEMBER
+// EDIT MEMBER MODAL
 // ============================================================
 function openMemberEditor(root, member) {
   const meta = roleMeta(member.role);
   const isSelf = member.user_id === store.state.session?.user?.id;
-  const isOwner = member.role === 'owner';
 
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-start md:items-center justify-center p-4 overflow-y-auto' });
   const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-lg my-8' });
@@ -436,14 +339,6 @@ function openMemberEditor(root, member) {
 
   const body = el('div', { class: 'p-5 space-y-4' });
 
-  // Read-only email / user id
-  if (member.user_id) {
-    body.appendChild(readonlyRow('User ID', member.user_id.slice(0, 16) + '…'));
-  } else {
-    body.appendChild(el('div', { class: 'text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3' },
-      'This member has no linked login yet. Ask them to sign up with the invite email, then an admin can link the account.'));
-  }
-
   const nameIn  = el('input', { type: 'text', value: member.display_name || '', class: inputCls });
   const phoneIn = el('input', { type: 'tel',  value: member.phone || '',        class: inputCls });
   const codeIn  = el('input', { type: 'text', value: member.employee_code || '',class: inputCls });
@@ -454,58 +349,9 @@ function openMemberEditor(root, member) {
     el('div', {}, [label('Employee code'), codeIn]),
   ]));
 
-  // Role — cannot demote last owner; cannot self-demote
-  const roleSel = el('select', { class: inputCls, disabled: isSelf && isOwner ? true : null },
+  const roleSel = el('select', { class: inputCls, disabled: isSelf ? true : null },
     ROLES.map(r => el('option', { value: r.id, selected: member.role === r.id ? true : null }, r.label)));
   body.appendChild(el('div', {}, [label('Role'), roleSel]));
-  body.appendChild(el('p', { class: 'text-[11px] text-slate-500 -mt-2' }, meta.desc || ''));
-
-  // Outlet access
-  const currentSet = state.memberOutlets.get(member.id) || new Set();
-  const outletGrid = el('div', { class: 'space-y-1.5 pt-2 border-t border-slate-100' }, [
-    label('Outlet access'),
-    el('p', { class: 'text-[11px] text-slate-500 mb-2' }, 'Leave all unchecked to grant access to every outlet.'),
-  ]);
-  const outletChecks = new Map();
-  state.outlets.forEach(o => {
-    const cb = el('input', { type: 'checkbox', class: 'mt-0.5', checked: currentSet.has(o.id) ? true : null });
-    outletChecks.set(o.id, cb);
-    outletGrid.appendChild(el('label', { class: 'flex items-start gap-2 text-sm text-slate-700 cursor-pointer py-1' }, [
-      cb,
-      el('span', {}, o.name + (o.is_active ? '' : ' (inactive)')),
-    ]));
-  });
-  body.appendChild(outletGrid);
-
-  // PIN management
-  const pinSection = el('div', { class: 'pt-2 border-t border-slate-100 space-y-2' }, [
-    label('POS PIN (4–6 digits)'),
-    el('p', { class: 'text-[11px] text-slate-500' },
-      member.pin_hash
-        ? 'A PIN is set. Enter a new one to change it, or click Clear to remove.'
-        : 'No PIN set. Staff can use this PIN for fast POS login on shared terminals.'),
-  ]);
-  const pinIn = el('input', {
-    type: 'password', inputmode: 'numeric', maxlength: '6', placeholder: '••••',
-    class: inputCls + ' tracking-widest',
-  });
-  pinSection.appendChild(pinIn);
-  if (member.pin_hash) {
-    pinSection.appendChild(el('button', {
-      class: 'text-[11px] text-red-600 hover:text-red-700 underline',
-      onclick: async (e) => {
-        e.preventDefault();
-        if (!confirm('Clear PIN for this staff member?')) return;
-        const { error } = await supabase.from('tenant_members').update({ pin_hash: null }).eq('id', member.id);
-        if (error) { toast('Failed: ' + error.message, 'error'); return; }
-        toast('PIN cleared', 'success');
-        member.pin_hash = null;
-        overlay.remove();
-        paint(root);
-      },
-    }, 'Clear PIN'));
-  }
-  body.appendChild(pinSection);
 
   card.appendChild(body);
 
@@ -515,10 +361,7 @@ function openMemberEditor(root, member) {
       disabled: isSelf ? true : null,
       onclick: async () => {
         if (isSelf) return;
-        const ok = await confirmDialog(
-          `Remove ${member.display_name || 'this member'} from the team? Their historical orders and payments will remain.`,
-          'Remove staff member?',
-        );
+        const ok = await confirmDialog(`Remove ${member.display_name || 'this member'}?`, 'Remove staff?');
         if (!ok) return;
         const { error } = await supabase.from('tenant_members').delete().eq('id', member.id);
         if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
@@ -547,11 +390,6 @@ function openMemberEditor(root, member) {
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
-      const pin = pinIn.value.trim();
-      if (pin && (pin.length < 4 || pin.length > 6 || !/^\d+$/.test(pin))) {
-        throw new Error('PIN must be 4–6 digits');
-      }
-
       const patch = {
         display_name:  nameIn.value.trim() || null,
         phone:         phoneIn.value.trim() || null,
@@ -559,27 +397,8 @@ function openMemberEditor(root, member) {
         role:          roleSel.value,
       };
 
-      // PIN: hash via pgcrypto in a secure RPC
-      if (pin) {
-        const { error: pinErr } = await supabase.rpc('set_member_pin', {
-          p_member_id: member.id,
-          p_pin: pin,
-        });
-        if (pinErr) throw pinErr;
-      }
-
       const { error } = await supabase.from('tenant_members').update(patch).eq('id', member.id);
       if (error) throw error;
-
-      // Outlet assignments
-      const selectedIds = [...outletChecks.entries()].filter(([, cb]) => cb.checked).map(([id]) => id);
-      await supabase.from('member_outlets').delete().eq('member_id', member.id);
-      if (selectedIds.length) {
-        const { error: moErr } = await supabase.from('member_outlets').insert(
-          selectedIds.map(id => ({ member_id: member.id, outlet_id: id })),
-        );
-        if (moErr) throw moErr;
-      }
 
       toast('Changes saved', 'success');
       overlay.remove();
@@ -592,13 +411,6 @@ function openMemberEditor(root, member) {
       btn.textContent = 'Save Changes';
     }
   });
-}
-
-function readonlyRow(labelText, value) {
-  return el('div', { class: 'text-xs text-slate-500 flex justify-between py-1 border-b border-dashed border-slate-200' }, [
-    el('span', { class: 'font-medium' }, labelText),
-    el('span', { class: 'font-mono text-slate-400' }, value),
-  ]);
 }
 
 function label(text) {

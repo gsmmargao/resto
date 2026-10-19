@@ -82,34 +82,20 @@ export async function renderSignup(root) {
     ]));
     card.appendChild(field('Password', passIn));
 
-    // Plan picker
-    const planBox = el('div', { class: 'mt-4' });
-    planBox.appendChild(el('div', { class: 'text-xs font-medium text-slate-600 mb-2' }, 'Choose your plan'));
-    const planGrid = el('div', { class: 'grid grid-cols-3 gap-2' });
-    const list = plans.length ? plans : [
-      { code: 'starter',    name: 'Starter',    price_monthly: 999,  limits: { outlets: 1 } },
-      { code: 'growth',     name: 'Growth',     price_monthly: 2499, limits: { outlets: 3 } },
-      { code: 'enterprise', name: 'Enterprise', price_monthly: 6999, limits: { outlets: 50 } },
-    ];
-
-    function paintPlans() {
-      planGrid.innerHTML = '';
-      list.forEach(p => {
-        const isActive = formState.planCode === p.code;
-        planGrid.appendChild(el('button', {
-          type: 'button',
-          class: `text-left p-2.5 rounded-lg border-2 transition ${isActive ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:border-slate-300'}`,
-          onclick: () => { formState.planCode = p.code; paintPlans(); },
-        }, [
-          el('div', { class: 'text-xs font-semibold text-slate-700' }, p.name),
-          el('div', { class: 'text-[11px] text-slate-500 mt-0.5' }, `₹${p.price_monthly}/mo`),
-          el('div', { class: 'text-[10px] text-slate-400 mt-1' }, `${p.limits?.outlets || 1} outlet${(p.limits?.outlets || 1) > 1 ? 's' : ''}`),
-        ]));
-      });
-    }
-    paintPlans();
-    planBox.appendChild(planGrid);
+    // Single Plan UI
+    const planBox = el('div', { class: 'mt-4 p-4 rounded-xl border-2 border-indigo-500 bg-indigo-50 flex justify-between items-center' }, [
+      el('div', {}, [
+        el('div', { class: 'font-bold text-indigo-900' }, 'Pro Yearly Plan'),
+        el('div', { class: 'text-xs text-indigo-700 mt-1' }, 'All features · 10 outlets · 100 staff'),
+        el('div', { class: 'text-xs text-emerald-600 font-bold mt-1' }, '15-day free trial')
+      ]),
+      el('div', { class: 'text-right' }, [
+        el('div', { class: 'text-xl font-bold text-indigo-900' }, '₹4,999'),
+        el('div', { class: 'text-[10px] text-indigo-600 uppercase tracking-wide' }, '/ year')
+      ])
+    ]);
     card.appendChild(planBox);
+    formState.planCode = 'pro';
 
     // Consent
     card.appendChild(el('label', { class: 'flex items-start gap-2 mt-4 text-xs text-slate-600 cursor-pointer' }, [

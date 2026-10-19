@@ -77,12 +77,14 @@ export async function openCheckoutModal() {
     el('span', { class: 'text-slate-500' }, l),
     el('span', { class: 'text-slate-800 font-medium' }, v),
   ]);
+  const isGst = store.state.tenant?.settings?.is_gst_enabled !== false;
+  
   left.appendChild(el('div', { class: 'text-sm space-y-1' }, [
     tRow('Subtotal', fmtMoney(t.gross)),
     t.discount > 0 ? tRow('Discount', '− ' + fmtMoney(t.discount), 'text-emerald-600') : null,
-    tRow('Taxable', fmtMoney(t.taxable)),
-    tRow('CGST', fmtMoney(t.tax / 2)),
-    tRow('SGST', fmtMoney(t.tax / 2)),
+    isGst ? tRow('Taxable', fmtMoney(t.taxable)) : null,
+    isGst ? tRow('CGST', fmtMoney(t.tax / 2)) : null,
+    isGst ? tRow('SGST', fmtMoney(t.tax / 2)) : null,
     t.serviceCharge > 0 ? tRow('Svc Charge', fmtMoney(t.serviceCharge)) : null,
     t.roundOff !== 0 ? tRow('Round Off', fmtMoney(t.roundOff)) : null,
     el('div', { class: 'flex justify-between pt-2 mt-2 border-t border-slate-300 text-base font-semibold text-slate-900' }, [
@@ -149,21 +151,19 @@ export async function openCheckoutModal() {
   const creditBox = el('div', { class: 'border-t border-slate-200 pt-3 space-y-2' });
   right.appendChild(creditBox);
 
-  const tipRow = el('div', { class: 'flex gap-1' });
+  const tipIn = el('input', {
+    type: 'number', step: '1', min: '0', placeholder: 'Enter Tip Amount (₹)',
+    class: 'w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
+    oninput: (e) => {
+      state.tipAmount = Number(e.target.value || 0);
+      renderPayments();
+    }
+  });
+  
   right.appendChild(el('div', { class: 'space-y-2 pt-2 border-t border-slate-200' }, [
     el('div', { class: 'font-semibold text-slate-700 text-sm' }, 'Tip'),
-    tipRow,
+    tipIn,
   ]));
-  [0, 20, 50, 100].forEach(amt => tipRow.appendChild(el('button', {
-    class: 'flex-1 py-2 rounded-lg border border-slate-300 text-sm hover:border-indigo-500 hover:bg-indigo-50 tip-btn',
-    onclick: (e) => {
-      state.tipAmount = amt;
-      tipRow.querySelectorAll('.tip-btn').forEach(b => b.classList.remove('bg-indigo-600', 'text-white'));
-      e.currentTarget.classList.add('bg-indigo-600', 'text-white');
-      renderPayments();
-    },
-  }, amt === 0 ? 'None' : `₹${amt}`)));
-  tipRow.firstChild.classList.add('bg-indigo-600', 'text-white');
 
   const printerBar = el('div', { class: 'text-xs text-slate-500 flex items-center gap-2' }, [
     el('span', {}, 'Printer:'),
@@ -636,7 +636,12 @@ export async function openCheckoutModal() {
       if (p.mode === 'cash') {
         row.appendChild(numInput('Tendered', p.tendered, v => { p.tendered = v; renderPayments(); }));
         const change = round2((p.tendered || 0) - (p.amount || 0));
-        if (change > 0) row.appendChild(el('div', { class: 'text-sm text-emerald-600 font-medium' }, `Change: ${fmtMoney(change)}`));
+        if (change > 0) {
+          row.appendChild(el('div', { class: 'mt-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-center' }, [
+            el('div', { class: 'text-xs text-emerald-700 font-semibold uppercase tracking-wide' }, 'Return Change to Customer'),
+            el('div', { class: 'text-2xl font-bold text-emerald-600 mt-0.5' }, fmtMoney(change))
+          ]));
+        }
       } else if (p.mode === 'card' || p.mode === 'upi') {
         row.appendChild(textInput('Reference / Txn ID', p.reference, v => { p.reference = v; }));
       } else if (p.mode === 'gift_card') {
@@ -729,8 +734,38 @@ export async function openCheckoutModal() {
           grandTotal: Number(result.invoice?.grand_total || 0),
         });
       } catch (e) {}
-      await showSuccessScreen(result, orderId);
+
+      // --- AUTO PRINT RECEIPT ---
+      if (isUSBConnected()) {
+        try {
+          const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).single();
+          const tableName = store.state.tables.find(t => t.id === order?.table_id)?.name || null;
+          
+          const receiptData = buildReceiptData({
+            tenant: store.state.tenant, 
+            outlet: store.state.outlet, 
+            order,
+            items: result.items, 
+            invoice: result.invoice,
+            payments: result.payments, 
+            customer: result.customer, 
+            tableName,
+          });
+          
+          await printUSB(buildReceiptBytes(receiptData));
+          toast('Payment saved & Receipt printed', 'success', 3000);
+        } catch (printErr) {
+          console.error('[billing] Auto-print failed:', printErr);
+          toast('Payment saved, but printer failed', 'warn', 3000);
+        }
+      } else {
+        toast('Payment saved (Printer not connected)', 'success', 3000);
+      }
+
       clearCart();
+      
+      // Navigate back to dashboard to reset the UI
+      import('../router.js').then(({ navigate }) => navigate('dashboard'));
     } catch (e) {
       console.error(e);
       toast(e.message || 'Failed to save invoice', 'error');

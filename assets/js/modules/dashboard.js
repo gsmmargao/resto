@@ -4,7 +4,7 @@ import { el, fmtMoney, fmtRelative, toast, confirmDialog } from '../utils.js';
 import { renderMenuPanel } from './menu.js';
 import { renderCartPanel, addToCart, clearCart, loadOrderIntoCart } from './cart.js';
 import { renderTablesView, loadTables, renderTablePicker } from './tables.js';
-import { sendKOT } from './kot.js';
+import { sendKOT, saveDraft } from './kot.js';
 import { openCheckoutModal } from './billing.js';
 import { publishCart, startPosBridge } from './customer-display.js';
 import { navigate } from '../router.js';
@@ -138,27 +138,103 @@ function renderPOS(root) {
     const id = await sendKOT();
     if (id) { await loadTables(); await refreshOpenOrders(); }
   }
+
+  async function handleSaveDraft() {
+    const id = await saveDraft();
+    if (id) { await loadTables(); await refreshOpenOrders(); }
+  }
 }
 
 function renderTables(root) {
-  renderTablesView(root, async (table, openOrder) => {
-    if (openOrder) {
-      const ok = await confirmDialog(
-        `Table ${table.name} has an open order #${openOrder.order_number} for ${fmtMoney(openOrder.grand_total)}.\n\nLoad it into the cart?`,
-        'Open order found',
-      );
-      if (ok) await openOrderIntoCart(openOrder.id, openOrder.order_number);
-    } else {
-      const ok = await confirmDialog(`Start a new order at table ${table.name}?`, 'New order');
-      if (ok) {
+  renderTablesView(root, (table, openOrder) => {
+    openTableActionModal(table, openOrder, root);
+  });
+}
+
+function openTableActionModal(table, openOrder, root) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3' });
+
+  card.appendChild(el('div', { class: 'mb-2' }, [
+    el('h3', { class: 'font-bold text-lg text-slate-800' }, `Table ${table.name}`),
+    el('p', { class: 'text-xs text-slate-500' }, `Status: ${openOrder ? 'Occupied' : table.status.toUpperCase()}`)
+  ]));
+
+  // 1. If there is an active order
+  if (openOrder) {
+    card.appendChild(el('div', { class: 'p-3 bg-slate-50 rounded-lg border border-slate-200 mb-3' }, [
+      el('div', { class: 'text-sm font-semibold text-slate-800' }, `#${openOrder.order_number}`),
+      el('div', { class: 'text-xs text-slate-500' }, `Total: ${fmtMoney(openOrder.grand_total)}`)
+    ]));
+
+    card.appendChild(el('button', {
+      class: 'w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm',
+      onclick: () => { overlay.remove(); openOrderIntoCart(openOrder.id, openOrder.order_number); }
+    }, 'Load Order to Cart'));
+
+    card.appendChild(el('button', {
+      class: 'w-full py-2.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 font-semibold text-sm',
+      onclick: async () => {
+        const ok = await confirmDialog('Cancel this order and clear the table? All unpainted items will be lost.', 'Cancel Order?');
+        if (ok) {
+          await supabase.from('orders').update({ status: 'cancelled' }).eq('id', openOrder.id);
+          await supabase.from('dining_tables').update({ status: 'available', current_order_id: null }).eq('id', table.id);
+          toast('Table cleared', 'success');
+          overlay.remove();
+          await loadTables();
+          paint(root); // Repaint tables view
+        }
+      }
+    }, 'Cancel Order & Clear Table'));
+
+  } 
+  // 2. If table is in cleaning status
+  else if (table.status === 'cleaning') {
+    card.appendChild(el('p', { class: 'text-sm text-slate-600 mb-4' }, 'This table is currently marked for cleaning.'));
+    card.appendChild(el('button', {
+      class: 'w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm',
+      onclick: async () => {
+        await supabase.from('dining_tables').update({ status: 'available' }).eq('id', table.id);
+        toast('Table is now available', 'success');
+        overlay.remove();
+        await loadTables();
+        paint(root);
+      }
+    }, 'Mark as Available'));
+  } 
+  // 3. If table is available
+  else {
+    card.appendChild(el('button', {
+      class: 'w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm',
+      onclick: () => {
         clearCart();
         store.state.cart.orderType = 'dine_in';
         store.state.cart.tableId = table.id;
         window.dispatchEvent(new CustomEvent('cart:changed'));
+        overlay.remove();
         navigate('dashboard');
       }
-    }
-  });
+    }, 'Start New Order'));
+    
+    card.appendChild(el('button', {
+      class: 'w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm',
+      onclick: async () => {
+        await supabase.from('dining_tables').update({ status: 'cleaning' }).eq('id', table.id);
+        toast('Marked for cleaning', 'info');
+        overlay.remove();
+        await loadTables();
+        paint(root);
+      }
+    }, 'Mark for Cleaning'));
+  }
+
+  card.appendChild(el('button', {
+    class: 'w-full py-2 text-slate-400 hover:text-slate-700 text-xs mt-2',
+    onclick: () => overlay.remove()
+  }, 'Close'));
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
 }
 
 function renderOrders(root) {

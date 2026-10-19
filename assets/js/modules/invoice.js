@@ -126,8 +126,8 @@ export async function saveInvoiceAndPayments({ orderId, totals, customer, paymen
   if (iiErr) throw iiErr;
 
   // 8. Payments — linked to open cash register
-  const tipPerPay = payments.length ? round2(Number(tipAmount || 0) / payments.length) : 0;
-  const payRows = payments.map(p => ({
+  // Assign the full tip to the first payment method used
+  const payRows = payments.map((p, i) => ({
     tenant_id:        tenant.id,
     outlet_id:        outlet.id,
     order_id:         orderId,
@@ -136,7 +136,7 @@ export async function saveInvoiceAndPayments({ orderId, totals, customer, paymen
     cash_register_id: store.state.cashRegister?.id || null,
     mode:             p.mode,
     amount:           round2(p.amount),
-    tip_amount:       tipPerPay,
+    tip_amount:       i === 0 ? round2(tipAmount) : 0,
     tendered_amount:  p.tendered || null,
     change_amount:    p.tendered ? round2(Math.max(0, p.tendered - p.amount)) : null,
     reference_no:     p.reference || null,

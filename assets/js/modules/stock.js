@@ -31,15 +31,23 @@ async function loadBase() {
   const tenantId = store.state.tenant.id;
   const outletId = store.state.outlet.id;
 
-  const [ingRes, catRes, lvlRes] = await Promise.all([
+  const [ingRes, catRes, lvlRes, unitRes] = await Promise.all([
     supabase.from('ingredients')
-      .select('id, name, sku, category_id, unit_id, min_stock, max_stock, reorder_qty, avg_cost, storage_type, is_active, units(name, abbreviation)')
+      .select('id, name, sku, category_id, unit_id, min_stock, max_stock, reorder_qty, avg_cost, storage_type, is_active')
       .eq('tenant_id', tenantId).eq('is_active', true).order('name'),
     supabase.from('ingredient_categories').select('*').eq('tenant_id', tenantId).order('name'),
     supabase.from('stock_levels').select('*').eq('outlet_id', outletId),
+    supabase.from('units').select('id, name, abbreviation').eq('tenant_id', tenantId)
   ]);
 
-  state.ingredients = ingRes.data || [];
+  if (ingRes.error) console.error('[stock] ingredients error:', ingRes.error);
+
+  const unitMap = new Map((unitRes.data || []).map(u => [u.id, u]));
+  state.ingredients = (ingRes.data || []).map(i => ({
+    ...i,
+    units: unitMap.get(i.unit_id) || null
+  }));
+
   state.categories  = catRes.data || [];
   const lvlMap = new Map((lvlRes.data || []).map(l => [l.ingredient_id, l]));
   state.levels = state.ingredients.map(i => ({
@@ -72,7 +80,7 @@ function paint(root) {
   ]);
 
   const tabs = el('div', { class: 'bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto' },
-    [['levels', 'Stock Levels'], ['movements', 'Movements'], ['wastage', 'Wastage'], ['reorder', 'Reorder'], ['recipes', 'Recipes']]
+    [['levels', 'Stock Levels'], ['movements', 'Movements'], ['wastage', 'Wastage'], ['reorder', 'Reorder'], ['recipes', 'Recipes'], ['report', 'Stock Report']]
       .map(([key, label]) =>
         el('button', {
           class: `px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition ${state.tab === key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-600 hover:text-slate-800'}`,
@@ -82,7 +90,7 @@ function paint(root) {
   const body = el('div', { class: 'flex-1 overflow-y-auto p-4 md:p-6' });
   const inner = el('div', { class: 'max-w-7xl mx-auto' });
 
-  const panels = { levels: renderLevels, movements: renderMovements, wastage: renderWastage, reorder: renderReorder, recipes: renderRecipes };
+  const panels = { levels: renderLevels, movements: renderMovements, wastage: renderWastage, reorder: renderReorder, recipes: renderRecipes, report: renderStockReport };
   panels[state.tab](root).then(panel => {
     inner.innerHTML = '';
     inner.appendChild(panel);
@@ -225,10 +233,12 @@ function kpi(label, value, gradient, sub = '') {
 // MOVEMENTS
 // ============================================================
 async function renderMovements() {
-  const { data: movs } = await supabase.from('stock_movements')
-    .select('id, movement_type, quantity, unit_cost, total_cost, reference_type, notes, created_at, ingredient_id, ingredients(name, units(abbreviation))')
+  const { data: movs, error } = await supabase.from('stock_movements')
+    .select('*')
     .eq('outlet_id', store.state.outlet.id)
     .order('created_at', { ascending: false }).limit(100);
+
+  if (error) console.error(error);
 
   const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
   card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
@@ -244,11 +254,13 @@ async function renderMovements() {
   const tbody = el('tbody');
   movs.forEach(m => {
     const isIn = Number(m.quantity) > 0;
-    const unit = m.ingredients?.units?.abbreviation || '';
+    const ing = state.ingredients.find(i => i.id === m.ingredient_id);
+    const unit = ing?.units?.abbreviation || '';
+    
     tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
       el('td', { class: 'px-4 py-2 text-xs text-slate-500 whitespace-nowrap' }, new Date(m.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })),
       el('td', { class: 'px-4 py-2' }, [
-        el('div', { class: 'text-sm text-slate-800 truncate max-w-[180px]' }, m.ingredients?.name || '—'),
+        el('div', { class: 'text-sm text-slate-800 truncate max-w-[180px]' }, ing?.name || '—'),
         m.notes ? el('div', { class: 'text-[10px] text-slate-400 truncate' }, m.notes) : null,
       ].filter(Boolean)),
       el('td', { class: 'px-4 py-2' }, [el('span', { class: `text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${badgeClass(m.movement_type)}` }, labelType(m.movement_type))]),
@@ -288,7 +300,7 @@ function labelType(t) {
 // ============================================================
 async function renderWastage(root) {
   const { data } = await supabase.from('wastage_logs')
-    .select('id, quantity, cost, reason, notes, created_at, ingredients(name, units(abbreviation))')
+    .select('*')
     .eq('outlet_id', store.state.outlet.id)
     .order('created_at', { ascending: false }).limit(100);
 
@@ -321,10 +333,11 @@ async function renderWastage(root) {
 
   const tbody = el('tbody');
   data.forEach(w => {
-    const unit = w.ingredients?.units?.abbreviation || '';
+    const ing = state.ingredients.find(i => i.id === w.ingredient_id);
+    const unit = ing?.units?.abbreviation || '';
     tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
       el('td', { class: 'px-4 py-2 text-xs text-slate-500 whitespace-nowrap' }, new Date(w.created_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })),
-      el('td', { class: 'px-4 py-2 text-sm text-slate-800' }, w.ingredients?.name || '—'),
+      el('td', { class: 'px-4 py-2 text-sm text-slate-800' }, ing?.name || '—'),
       el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700' }, `${formatQty(w.quantity)} ${unit}`),
       el('td', { class: 'px-4 py-2 text-right text-sm text-red-600 font-semibold' }, fmtMoney(w.cost)),
       el('td', { class: 'px-4 py-2 text-xs text-slate-500 capitalize' }, w.reason.replace('_', ' ')),
@@ -354,7 +367,7 @@ async function renderWastage(root) {
 // ============================================================
 async function renderReorder() {
   const { data, error } = await supabase.from('v_reorder_sheet')
-    .select('*').eq('outlet_id', store.state.outlet.id)
+    .select('*').eq('tenant_id', store.state.tenant.id)
     .order('estimated_cost', { ascending: false });
 
   if (error) console.warn('[reorder]', error);
@@ -424,39 +437,62 @@ function copyReorderSheet(rows) {
 // RECIPES
 // ============================================================
 async function renderRecipes() {
-  const { data: recipes } = await supabase.from('recipes')
-    .select('id, computed_cost, yield_quantity, menu_item_id, variant_id, is_active, menu_items(name, base_price), menu_item_variants(name, price), recipe_ingredients(quantity, ingredient_id, wastage_percent, ingredients(name, avg_cost, units(abbreviation)))')
-    .eq('tenant_id', store.state.tenant.id).eq('is_active', true)
-    .order('computed_cost', { ascending: false });
+  const tenantId = store.state.tenant.id;
+  
+  // Fetch data safely without nested joins to avoid PostgREST bugs
+  const [recRes, itemRes, varRes, rIngRes] = await Promise.all([
+    supabase.from('recipes').select('*').eq('tenant_id', tenantId).eq('is_active', true).order('computed_cost', { ascending: false }),
+    supabase.from('menu_items').select('id, name, base_price').eq('tenant_id', tenantId),
+    supabase.from('menu_item_variants').select('id, name, price, menu_item_id').eq('tenant_id', tenantId),
+    supabase.from('recipe_ingredients').select('*').eq('tenant_id', tenantId)
+  ]);
+
+  const recipes = recRes.data || [];
+  const items = itemRes.data || [];
+  const vars = varRes.data || [];
+  const r_ings = rIngRes.data || [];
+
+  const itemMap = new Map(items.map(i => [i.id, i]));
+  const varMap = new Map(vars.map(v => [v.id, v]));
+
+  // Attach ingredients to recipes
+  recipes.forEach(r => {
+    r.recipe_ingredients = r_ings.filter(ri => ri.recipe_id === r.id).map(ri => ({
+      ...ri,
+      ingredient: state.ingredients.find(i => i.id === ri.ingredient_id)
+    }));
+  });
 
   const wrap = el('div', {});
-  const list = recipes || [];
-  const totalCost = list.reduce((s, r) => s + Number(r.computed_cost || 0), 0);
-  const avgCost = list.length ? totalCost / list.length : 0;
+  const totalCost = recipes.reduce((s, r) => s + Number(r.computed_cost || 0), 0);
+  const avgCost = recipes.length ? totalCost / recipes.length : 0;
 
   const summary = el('div', { class: 'grid grid-cols-2 md:grid-cols-3 gap-3 mb-3' });
-  summary.appendChild(kpi('Active Recipes', String(list.length), 'from-purple-500 to-purple-600', 'With BOM defined'));
+  summary.appendChild(kpi('Active Recipes', String(recipes.length), 'from-purple-500 to-purple-600', 'With BOM defined'));
   summary.appendChild(kpi('Avg Recipe Cost', fmtMoney(avgCost), 'from-slate-600 to-slate-700', 'Per unit'));
   summary.appendChild(kpi('Total BOM Cost', fmtMoney(totalCost), 'from-indigo-500 to-indigo-600', 'Sum of all recipes'));
   wrap.appendChild(summary);
 
-  if (!list.length) {
-    wrap.appendChild(el('div', { class: 'bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm' }, 'No recipes yet'));
+  if (!recipes.length) {
+    wrap.appendChild(el('div', { class: 'bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm' }, 'No recipes yet. Go to the "📖 Recipes" tab in the top menu to create one.'));
     return wrap;
   }
 
   const grid = el('div', { class: 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3' });
-  list.forEach(r => {
-    const itemName = r.menu_items?.name || '—';
-    const variant = r.menu_item_variants?.name ? ` (${r.menu_item_variants.name})` : '';
-    const sellPrice = Number(r.menu_item_variants?.price ?? r.menu_items?.base_price ?? 0);
+  recipes.forEach(r => {
+    const item = itemMap.get(r.menu_item_id);
+    const variant = r.variant_id ? varMap.get(r.variant_id) : null;
+    
+    const itemName = item?.name || '—';
+    const variantName = variant?.name ? ` (${variant.name})` : '';
+    const sellPrice = Number(variant?.price ?? item?.base_price ?? 0);
     const cost = Number(r.computed_cost || 0);
     const margin = sellPrice > 0 ? ((sellPrice - cost) / sellPrice) * 100 : 0;
 
     const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
     card.appendChild(el('div', { class: 'px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-start justify-between gap-2' }, [
       el('div', { class: 'min-w-0' }, [
-        el('div', { class: 'font-semibold text-slate-800 text-sm truncate' }, itemName + variant),
+        el('div', { class: 'font-semibold text-slate-800 text-sm truncate' }, itemName + variantName),
         el('div', { class: 'text-[10px] text-slate-500 uppercase' }, `Yield: ${r.yield_quantity}`),
       ]),
       el('div', { class: 'text-right shrink-0' }, [
@@ -479,16 +515,16 @@ async function renderRecipes() {
     const ingList = el('div', { class: 'p-3 space-y-1 max-h-40 overflow-y-auto' });
     (r.recipe_ingredients || []).forEach(ri => {
       const qty = Number(ri.quantity || 0);
-      const unit = ri.ingredients?.units?.abbreviation || '';
-      const lineCost = qty * Number(ri.ingredients?.avg_cost || 0);
+      const unit = ri.ingredient?.units?.abbreviation || '';
+      const lineCost = qty * Number(ri.ingredient?.avg_cost || 0);
       ingList.appendChild(el('div', { class: 'flex items-center justify-between text-xs' }, [
-        el('span', { class: 'text-slate-600 truncate flex-1 mr-2' }, ri.ingredients?.name || '—'),
+        el('span', { class: 'text-slate-600 truncate flex-1 mr-2' }, ri.ingredient?.name || '—'),
         el('span', { class: 'text-slate-500 font-mono text-[10px] mr-2' }, formatQty(qty) + ' ' + unit),
         el('span', { class: 'text-slate-700 font-medium' }, fmtMoney(lineCost)),
       ]));
     });
     if (!r.recipe_ingredients?.length) {
-      ingList.appendChild(el('div', { class: 'text-xs text-slate-400 italic text-center py-2' }, 'No ingredients'));
+      ingList.appendChild(el('div', { class: 'text-xs text-slate-400 italic text-center py-2' }, 'No ingredients linked'));
     }
     card.appendChild(ingList);
     grid.appendChild(card);
@@ -670,3 +706,65 @@ function openWastageModal(root) {
 }
 
 const inputCls = 'w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+
+async function renderStockReport() {
+  const { data, error } = await supabase.from('stock_count_items')
+    .select(`
+      id, counted_qty, system_qty, variance_qty, ingredient_id, created_at,
+      stock_counts!inner(count_number, completed_at)
+    `)
+    .eq('tenant_id', store.state.tenant.id)
+    .order('created_at', { ascending: false });
+
+  if (error) console.error(error);
+
+  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
+  card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50' }, [
+    el('h3', { class: 'font-semibold text-slate-800 text-sm' }, 'Physical Stock Count Report'),
+  ]));
+
+  if (!data?.length) {
+    card.appendChild(el('div', { class: 'p-8 text-center text-slate-400 text-sm' }, 'No physical stock counts recorded yet'));
+    return card;
+  }
+
+  const tbody = el('tbody');
+  data.forEach(item => {
+    const ing = state.ingredients.find(i => i.id === item.ingredient_id);
+    const variance = Number(item.variance_qty);
+    const isMatch = variance === 0;
+    const isSurplus = variance > 0;
+    
+    let varColor = 'text-slate-400';
+    let varText = 'Matches';
+    if (!isMatch) {
+      varColor = isSurplus ? 'text-emerald-600' : 'text-red-600';
+      varText = (isSurplus ? '+' : '') + variance.toFixed(2);
+    }
+
+    tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
+      el('td', { class: 'px-4 py-2 text-xs text-slate-500 whitespace-nowrap' }, 
+        new Date(item.stock_counts.completed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })),
+      el('td', { class: 'px-4 py-2 text-xs text-slate-500 font-mono' }, item.stock_counts.count_number),
+      el('td', { class: 'px-4 py-2 text-sm text-slate-800' }, ing?.name || '—'),
+      el('td', { class: 'px-4 py-2 text-right text-sm text-slate-500' }, Number(item.system_qty).toFixed(2)),
+      el('td', { class: 'px-4 py-2 text-right text-sm font-semibold text-slate-800' }, Number(item.counted_qty).toFixed(2)),
+      el('td', { class: `px-4 py-2 text-right font-bold ${varColor}` }, varText),
+    ]));
+  });
+
+  card.appendChild(el('table', { class: 'w-full' }, [
+    el('thead', { class: 'bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide' }, [
+      el('tr', {}, [
+        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Date'),
+        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Count #'),
+        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Ingredient'),
+        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'System Qty'),
+        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Counted Qty'),
+        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Variance'),
+      ]),
+    ]),
+    tbody,
+  ]));
+  return card;
+}

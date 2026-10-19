@@ -249,3 +249,59 @@ export function uint8ToBase64(bytes) {
   }
   return btoa(binary);
 }
+
+// ============================================================
+// KOT PRINTING (Kitchen Order Ticket)
+// ============================================================
+export function buildKOTBytes({ kot, items, tableName, waiterName, orderType }) {
+  const W = 48;
+  const b = new ESCPOSBuilder({ width: W });
+
+  b.init();
+  
+  // Header
+  b.align('center').bold(true).doubleHeight(true).doubleWidth(true);
+  b.line('KITCHEN ORDER');
+  b.size(true).bold(false);
+  b.hr('=');
+
+  // Metadata
+  b.align('left').bold(true);
+  b.line(padLine(`KOT: ${kot.kot_number}`, tableName ? `Table: ${tableName}` : orderType.toUpperCase(), W));
+  b.bold(false);
+  b.line(padLine(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), waiterName ? `Waiter: ${waiterName}` : '', W));
+  b.hr('-');
+
+  // Items
+  for (const it of items) {
+    b.bold(true).doubleHeight(true);
+    b.line(`${Number(it.quantity)} x ${it.name_snapshot}`);
+    b.doubleHeight(false).bold(false);
+    
+    if (it.variant_name) b.line(`   > ${it.variant_name}`);
+    if (it.notes) b.line(`   * ${it.notes}`);
+    b.line(); // spacing
+  }
+
+  b.hr('=');
+  b.align('center');
+  b.line('PLEASE PREPARE');
+  b.feed(3).cut();
+
+  return b.bytes();
+}
+
+export async function printKOT(kotData) {
+  if (!isUSBConnected()) {
+    console.warn('[printer] KOT not printed: No USB printer connected');
+    return false;
+  }
+  try {
+    const bytes = buildKOTBytes(kotData);
+    await printUSB(bytes);
+    return true;
+  } catch (err) {
+    console.error('[printer] KOT print failed:', err);
+    return false;
+  }
+}

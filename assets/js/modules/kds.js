@@ -177,14 +177,17 @@ async function refreshAll(grid, empty) {
 
   const { data: kots, error: kErr } = await supabase
     .from('kots')
-    .select('*')
+    .select('*, tenant_members:created_by(display_name)')
     .eq('outlet_id', outletId)
     .in('status', ['pending', 'acknowledged', 'preparing', 'ready'])
     .order('created_at', { ascending: true });
 
   if (kErr) { console.error(kErr); toast('Failed to load KOTs', 'error'); return; }
 
-  state.kots = kots || [];
+  state.kots = (kots || []).map(k => ({
+    ...k,
+    waiter_name: k.tenant_members?.display_name
+  }));
   state.itemsByKot = new Map();
 
   if (state.kots.length) {
@@ -269,6 +272,8 @@ function buildCard(kot) {
         el('div', { class: 'flex-1 min-w-0' }, [
           el('div', { class: 'text-sm font-medium text-white leading-tight truncate' }, it.name_snapshot),
           it.variant_name ? el('div', { class: 'text-xs text-slate-400 leading-tight' }, it.variant_name) : null,
+          // Add waiter name if it exists on the KOT object
+          kot.waiter_name ? el('div', { class: 'text-[10px] text-amber-300 mt-0.5' }, `👤 ${kot.waiter_name}`) : null,
           it.notes ? el('div', { class: 'text-xs italic text-amber-300 leading-tight mt-0.5' }, `↳ ${it.notes}`) : null,
         ].filter(Boolean)),
       ]));
