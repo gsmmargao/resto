@@ -43,14 +43,13 @@ export async function loadTables() {
 
 export function renderTablesView(root, onPickTable) {
   root.innerHTML = '';
-  const areas  = store.state.areas || [];
-  const tables = store.state.tables || [];
-  const openByTable = new Map();
-  (store.state.openOrders || []).forEach(o => { if (o.table_id) openByTable.set(o.table_id, o); });
+  
+  // Create a strict flex container so the body can scroll independently
+  const container = el('div', { class: 'h-full flex flex-col' });
 
-  const header = el('div', { class: 'p-4 border-b border-slate-200 bg-white flex items-center justify-between' }, [
+  const header = el('div', { class: 'p-4 border-b border-slate-200 bg-white shrink-0 flex flex-wrap items-center justify-between gap-2' }, [
     el('h2', { class: 'text-lg font-semibold text-slate-800' }, 'Floor Plan'),
-    el('div', { class: 'flex items-center gap-3 text-xs' }, [
+    el('div', { class: 'flex flex-wrap items-center gap-2 text-xs' }, [
       legend('bg-emerald-500', 'Available'),
       legend('bg-red-500',     'Occupied'),
       legend('bg-amber-400',   'Reserved'),
@@ -58,7 +57,12 @@ export function renderTablesView(root, onPickTable) {
     ]),
   ]);
 
-  const body = el('div', { class: 'flex-1 overflow-auto p-4 bg-slate-100' });
+  const body = el('div', { class: 'flex-1 min-h-0 overflow-y-auto p-4 bg-slate-100' });
+
+  const areas  = store.state.areas || [];
+  const tables = store.state.tables || [];
+  const openByTable = new Map();
+  (store.state.openOrders || []).forEach(o => { if (o.table_id) openByTable.set(o.table_id, o); });
 
   if (!tables.length) {
     body.appendChild(el('div', { class: 'text-center text-slate-500 py-20 text-sm' }, 'No tables configured'));
@@ -73,15 +77,16 @@ export function renderTablesView(root, onPickTable) {
     grouped.forEach((list, areaId) => {
       const areaName = areas.find(a => a.id === areaId)?.name || 'Main';
       body.appendChild(el('div', { class: 'mb-6' }, [
-        el('h3', { class: 'text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2' }, areaName),
-        el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3' },
+        el('h3', { class: 'text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3' }, areaName),
+        el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 md:gap-3' },
           list.map(t => buildCard(t, openByTable.get(t.id), onPickTable))),
       ]));
     });
   }
 
-  root.appendChild(header);
-  root.appendChild(body);
+  container.appendChild(header);
+  container.appendChild(body);
+  root.appendChild(container);
 }
 
 function buildCard(table, openOrder, onPickTable) {

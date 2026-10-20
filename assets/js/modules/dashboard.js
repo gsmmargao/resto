@@ -24,7 +24,7 @@ export async function renderDashboard(root) {
   // If a table is already selected, start in POS view, else start in Tables view
   const startView = store.state.cart.tableId ? 'pos' : 'tables';
   
-  const subnav = el('div', { class: 'flex items-center gap-2 p-2 border-b border-slate-200 bg-white' }, [
+  const subnav = el('div', { class: 'flex items-center gap-2 p-2 border-b border-slate-200 bg-white overflow-x-auto whitespace-nowrap shrink-0' }, [
     tab('Tables', 'tables', startView === 'tables'),
     tab('Orders', 'orders', startView === 'orders'),
     startView === 'pos' ? el('button', {
