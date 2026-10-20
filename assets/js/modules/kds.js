@@ -17,9 +17,6 @@ const state = {
   lastKotIds: new Set(),
 };
 
-// ============================================================
-// ENTRY
-// ============================================================
 export async function renderKDS(root) {
   if (!store.state.outlet) throw new Error('No outlet in session');
   if (!store.state.tables?.length) await loadTables();
@@ -81,9 +78,6 @@ function cleanup() {
   if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
 }
 
-// ============================================================
-// HEADER
-// ============================================================
 function buildHeader(root) {
   const header = el('div', { class: 'flex items-center justify-between px-4 py-3 bg-slate-950 border-b border-slate-800 flex-wrap gap-3' });
 
@@ -159,9 +153,6 @@ function paintStationChips(container) {
   });
 }
 
-// ============================================================
-// DATA
-// ============================================================
 async function fetchStations() {
   const { data } = await supabase
     .from('kitchen_stations')
@@ -175,19 +166,20 @@ async function fetchStations() {
 async function refreshAll(grid, empty) {
   const outletId = store.state.outlet.id;
 
+  // FIXED: Removed the broken tenant_members join
   const { data: kots, error: kErr } = await supabase
     .from('kots')
-    .select('*, tenant_members:created_by(display_name)')
+    .select('*')
     .eq('outlet_id', outletId)
     .in('status', ['pending', 'acknowledged', 'preparing', 'ready'])
     .order('created_at', { ascending: true });
 
-  if (kErr) { console.error(kErr); toast('Failed to load KOTs', 'error'); return; }
+  if (kErr) { 
+    console.error('[KDS] Failed to load KOTs:', kErr); 
+    return; 
+  }
 
-  state.kots = (kots || []).map(k => ({
-    ...k,
-    waiter_name: k.tenant_members?.display_name
-  }));
+  state.kots = kots || [];
   state.itemsByKot = new Map();
 
   if (state.kots.length) {
@@ -206,9 +198,6 @@ async function refreshAll(grid, empty) {
   paintGrid(grid, empty);
 }
 
-// ============================================================
-// GRID
-// ============================================================
 function paintGrid(grid, empty) {
   if (!grid) return;
   grid.innerHTML = '';
@@ -272,8 +261,6 @@ function buildCard(kot) {
         el('div', { class: 'flex-1 min-w-0' }, [
           el('div', { class: 'text-sm font-medium text-white leading-tight truncate' }, it.name_snapshot),
           it.variant_name ? el('div', { class: 'text-xs text-slate-400 leading-tight' }, it.variant_name) : null,
-          // Add waiter name if it exists on the KOT object
-          kot.waiter_name ? el('div', { class: 'text-[10px] text-amber-300 mt-0.5' }, `👤 ${kot.waiter_name}`) : null,
           it.notes ? el('div', { class: 'text-xs italic text-amber-300 leading-tight mt-0.5' }, `↳ ${it.notes}`) : null,
         ].filter(Boolean)),
       ]));
@@ -308,9 +295,6 @@ function actionBtn(label, cls, onClick) {
   }, label);
 }
 
-// ============================================================
-// STATUS ADVANCE
-// ============================================================
 async function advance(kot, newStatus) {
   const now = new Date().toISOString();
   const patch = { status: newStatus };
@@ -338,9 +322,6 @@ async function advance(kot, newStatus) {
   );
 }
 
-// ============================================================
-// REALTIME
-// ============================================================
 function subscribe(grid, empty) {
   if (channel) { supabase.removeChannel(channel); channel = null; }
   const outletId = store.state.outlet.id;
@@ -373,9 +354,6 @@ function subscribe(grid, empty) {
   }
 }
 
-// ============================================================
-// UTILITIES
-// ============================================================
 function formatElapsed(minutes) {
   if (minutes < 1)  return '<1m';
   if (minutes < 60) return `${Math.floor(minutes)}m`;
