@@ -4,7 +4,7 @@ import { el, fmtMoney, fmtRelative, toast, confirmDialog } from '../utils.js';
 import { renderMenuPanel } from './menu.js';
 import { renderCartPanel, addToCart, clearCart, loadOrderIntoCart } from './cart.js';
 import { renderTablesView, loadTables, renderTablePicker } from './tables.js';
-import { sendKOT, saveDraft } from './kot.js';
+import { sendKOT } from './kot.js';
 import { openCheckoutModal } from './billing.js';
 import { publishCart, startPosBridge } from './customer-display.js';
 import { navigate } from '../router.js';
@@ -139,10 +139,6 @@ function renderPOS(root) {
     if (id) { await loadTables(); await refreshOpenOrders(); }
   }
 
-  async function handleSaveDraft() {
-    const id = await saveDraft();
-    if (id) { await loadTables(); await refreshOpenOrders(); }
-  }
 }
 
 function renderTables(root) {

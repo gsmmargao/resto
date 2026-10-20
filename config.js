@@ -8,6 +8,6 @@ export const CONFIG = {
   DEFAULT_TAX_RATE:  0.05,
   ROUND_OFF_ENABLED: true,
   DEFAULT_OUTLET_ID: null,
-  LOCAL_SERVER_IP:   '192.168.100.151', // <--- ADD THIS LINE
+  LOCAL_SERVER_IP: '192.168.100.151', // <--- ADD THIS LINE
   DEBUG:             true,
 };

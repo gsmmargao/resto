@@ -1,4 +1,5 @@
 import { supabase } from '../supabase-client.js';
+import { CONFIG } from '../../../config.js';
 import { store } from '../store.js';
 import { el, fmtMoney, fmtRelative, toast } from '../utils.js';
 import { clearCart } from './cart.js';
@@ -769,30 +770,44 @@ export async function openCheckoutModal() {
       } catch (e) {}
 
       // --- AUTO PRINT RECEIPT ---
-      if (isUSBConnected()) {
-        try {
-          const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).single();
-          const tableName = store.state.tables.find(t => t.id === order?.table_id)?.name || null;
-          
-          const receiptData = buildReceiptData({
-            tenant: store.state.tenant, 
-            outlet: store.state.outlet, 
-            order,
-            items: result.items, 
-            invoice: result.invoice,
-            payments: result.payments, 
-            customer: result.customer, 
-            tableName,
+      try {
+        const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).single();
+        const tableName = store.state.tables.find(t => t.id === order?.table_id)?.name || null;
+        
+        const receiptData = buildReceiptData({
+          tenant: store.state.tenant, 
+          outlet: store.state.outlet, 
+          order,
+          items: result.items, 
+          invoice: result.invoice,
+          payments: result.payments, 
+          customer: result.customer, 
+          tableName,
+        });
+
+        if (CONFIG.LOCAL_SERVER_IP) {
+          // Print via local LAN Server
+          fetch(`http://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(receiptData)
+          }).then(res => {
+            if (!res.ok) throw new Error('Server error: ' + res.status);
+            console.log("✅ Bill sent to Local Server");
+            toast('Payment saved & Bill printed', 'success', 3000);
+          }).catch(err => {
+            console.error('❌ LAN Print error:', err);
+            toast('Payment saved, but LAN printer failed', 'warn', 3000);
           });
-          
+        } else if (isUSBConnected()) {
           await printUSB(buildReceiptBytes(receiptData));
           toast('Payment saved & Receipt printed', 'success', 3000);
-        } catch (printErr) {
-          console.error('[billing] Auto-print failed:', printErr);
-          toast('Payment saved, but printer failed', 'warn', 3000);
+        } else {
+          toast('Payment saved (Printer not connected)', 'success', 3000);
         }
-      } else {
-        toast('Payment saved (Printer not connected)', 'success', 3000);
+      } catch (printErr) {
+        console.error('[billing] Auto-print failed:', printErr);
+        toast('Payment saved, but printer failed', 'warn', 3000);
       }
 
       clearCart();

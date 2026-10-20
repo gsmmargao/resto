@@ -2,7 +2,7 @@ import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
 import { toast } from '../utils.js';
 import { printKOT } from './printer.js';
-import { isOnline, queueOrder } from './offline-sync.js';
+import { CONFIG } from '../../../config.js';
 
 const ORDER_STATUS_VALUES  = new Set(['draft','open','in_kitchen','partially_ready','ready','served','billed','paid','partially_paid','cancelled','refunded','merged']);
 const ORDER_TYPE_VALUES    = new Set(['dine_in','takeaway','delivery','online']);
@@ -24,59 +24,6 @@ export async function sendKOT() {
   const tableRow = store.state.tables.find(t => t.id === cart.tableId);
 
   let orderId = cart.orderId;
-  const offline = !isOnline();
-
-  // ---- OFFLINE PATH ----
-  // Queue the entire order + items + KOTs as one atomic op.
-  if (offline && !orderId) {
-    const clientUuid = crypto.randomUUID();
-    const byStationPreview = new Map();
-    newItems.forEach(l => {
-      const key = l.stationId || 'default';
-      if (!byStationPreview.has(key)) byStationPreview.set(key, []);
-      byStationPreview.get(key).push(l);
-    });
-
-    const payload = {
-      client_uuid: clientUuid,
-      tenant_id: tenant.id,
-      outlet_id: outlet.id,
-      order_type: ORDER_TYPE_VALUES.has(cart.orderType) ? cart.orderType : 'dine_in',
-      status: 'in_kitchen',
-      table_id: cart.tableId || null,
-      table_name_snapshot: tableRow?.name || null,
-      guest_count: Number(cart.guestCount) || 1,
-      waiter_id: member?.id || null,
-      cashier_id: member?.id || null,
-      created_by: store.state.session?.user?.id || null,
-      service_charge_pct: Number(cart.serviceChargePct) || 0,
-      items: newItems.map(l => ({
-        menu_item_id: l.menuItemId,
-        variant_id: l.variantId,
-        name_snapshot: l.name,
-        variant_name: l.variantName,
-        quantity: Number(l.qty),
-        unit_price: Number(l.unitPrice),
-        tax_rate: Number(l.taxRate),
-        tax_inclusive: !!l.taxInclusive,
-        status: 'sent_to_kitchen',
-        station_id: l.stationId || null,
-        notes: l.notes || null,
-      })),
-      kots: [...byStationPreview.entries()].map(([stationId, items]) => ({
-        station_id: stationId === 'default' ? null : stationId,
-        order_type: ORDER_TYPE_VALUES.has(cart.orderType) ? cart.orderType : 'dine_in',
-        guest_count: Number(cart.guestCount) || 1,
-      })),
-    };
-
-    await queueOrder(payload);
-    newItems.forEach(l => { l._saved = true; });
-    window.dispatchEvent(new CustomEvent('cart:changed'));
-    toast('Saved offline — will sync when reconnected', 'warn', 4000);
-    return 'offline-' + clientUuid;
-  }
-
   if (!orderId) {
     const { data: orderNo, error: seqErr } = await supabase
       .rpc('next_doc_number', { p_outlet: outlet.id, p_doc_type: 'order' });
@@ -94,9 +41,7 @@ export async function sendKOT() {
       service_charge_pct: Number(cart.serviceChargePct) || 0,
     };
 
-    if (!ORDER_STATUS_VALUES.has(payload.status)
-      || !ORDER_TYPE_VALUES.has(payload.order_type)
-      || !ORDER_SOURCE_VALUES.has(payload.source)) {
+    if (!ORDER_STATUS_VALUES.has(payload.status) || !ORDER_TYPE_VALUES.has(payload.order_type) || !ORDER_SOURCE_VALUES.has(payload.source)) {
       toast('Internal: invalid enum', 'error'); return null;
     }
 
@@ -168,78 +113,37 @@ export async function sendKOT() {
     kotSuccess++;
 
     // --- AUTO PRINT KOT ---
-    // We run this without awaiting so it doesn't block the UI if the printer is slow
-    printKOT({
-      kot: kot,
-      items: items,
-      tableName: tableRow?.name || null,
-      waiterName: member?.display_name || null,
-      orderType: cart.orderType
-    }).catch(err => console.error('Print error:', err));
+    if (CONFIG.LOCAL_SERVER_IP) {
+      console.log("Sending KOT to LAN Server at:", CONFIG.LOCAL_SERVER_IP);
+      fetch(`http://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kot: kot.kot_number,
+          items: items.map(i => ({ name: i.name_snapshot, quantity: i.quantity, variant: i.variant_name, notes: i.notes })),
+          tableName: tableRow?.name || 'Takeaway',
+          waiterName: member?.display_name
+        })
+      }).then(res => {
+        if (!res.ok) throw new Error('Server error: ' + res.status);
+        console.log("✅ KOT sent to Local Server");
+      }).catch(err => {
+        console.error('❌ LAN Print error:', err);
+      });
+    } else {
+      printKOT({
+        kot: kot,
+        items: items,
+        tableName: tableRow?.name || null,
+        waiterName: member?.display_name || null,
+        orderType: cart.orderType
+      }).catch(err => console.error('Print error:', err));
+    }
   }
 
   await supabase.rpc('recalc_order', { p_order_id: orderId });
 
   if (kotSuccess === 0) { toast('Order saved but no KOT created', 'warn'); return null; }
   toast(kotSuccess + ' KOT' + (kotSuccess > 1 ? 's' : '') + ' sent to kitchen', 'success');
-  return orderId;
-}
-
-export async function saveDraft() {
-  const cart = store.state.cart;
-  const outlet = store.state.outlet;
-  const tenant = store.state.tenant;
-  const member = store.state.member;
-
-  if (!cart.items.length) { toast('Cart is empty', 'warn'); return null; }
-  if (cart.orderType === 'dine_in' && !cart.tableId) { toast('Select a table first', 'warn'); return null; }
-
-  const tableRow = store.state.tables.find(t => t.id === cart.tableId);
-  let orderId = cart.orderId;
-
-  if (!orderId) {
-    const { data: orderNo, error: seqErr } = await supabase.rpc('next_doc_number', { p_outlet: outlet.id, p_doc_type: 'order' });
-    if (seqErr || !orderNo) { toast('Order numbering failed', 'error'); return null; }
-
-    const payload = {
-      tenant_id: tenant.id, outlet_id: outlet.id, order_number: orderNo,
-      order_type: cart.orderType, source: 'pos', status: 'open',
-      table_id: cart.tableId || null, table_name_snapshot: tableRow?.name || null,
-      guest_count: Number(cart.guestCount) || 1,
-      waiter_id: member?.id || null, cashier_id: member?.id || null,
-      created_by: store.state.session?.user?.id || null,
-    };
-
-    const { data: order, error } = await supabase.from('orders').insert(payload).select().single();
-    if (error) { toast('Order insert failed: ' + error.message, 'error'); return null; }
-    orderId = order.id;
-    store.state.cart.orderId = orderId;
-  }
-
-  const newItems = cart.items.filter(l => !l._saved);
-  if (!newItems.length) { toast('No new items to save', 'warn'); return null; }
-
-  const itemRows = newItems.map(l => ({
-    tenant_id: tenant.id, outlet_id: outlet.id, order_id: orderId,
-    menu_item_id: l.menuItemId, variant_id: l.variantId,
-    name_snapshot: l.name, variant_name: l.variantName,
-    quantity: Number(l.qty), unit_price: Number(l.unitPrice),
-    tax_rate: Number(l.taxRate), tax_inclusive: !!l.taxInclusive,
-    status: 'pending', station_id: l.stationId || null, notes: l.notes || null,
-    created_by: store.state.session?.user?.id || null,
-  }));
-
-  const { data: insertedItems, error: iErr } = await supabase.from('order_items').insert(itemRows).select();
-  if (iErr) { toast('Order items failed: ' + iErr.message, 'error'); return null; }
-
-  newItems.forEach((l, i) => {
-    l._saved = true;
-    l._dbId = insertedItems[i]?.id;
-    l.status = 'pending';
-  });
-  window.dispatchEvent(new CustomEvent('cart:changed'));
-
-  await supabase.rpc('recalc_order', { p_order_id: orderId });
-  toast('Order held successfully', 'success');
   return orderId;
 }
