@@ -27,7 +27,7 @@ export async function renderDashboard(root) {
   wrapper.appendChild(content);
   root.appendChild(wrapper);
 
-  let current = 'pos';
+  let current = startView;
   function switchView(v) {
     current = v;
     content.innerHTML = '';
@@ -35,7 +35,7 @@ export async function renderDashboard(root) {
     if (v === 'tables') renderTables(content);
     if (v === 'orders') renderOrders(content);
   }
-  switchView('pos');
+  switchView(startView);
 
   function tab(label, key, active = false) {
     return el('button', {
