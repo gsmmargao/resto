@@ -787,7 +787,7 @@ export async function openCheckoutModal() {
 
         if (CONFIG.LOCAL_SERVER_IP) {
           // Print via local LAN Server
-          fetch(`http://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
+          fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(receiptData)

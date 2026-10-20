@@ -115,7 +115,7 @@ export async function sendKOT() {
     // --- AUTO PRINT KOT ---
     if (CONFIG.LOCAL_SERVER_IP) {
       console.log("Sending KOT to LAN Server at:", CONFIG.LOCAL_SERVER_IP);
-      fetch(`http://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
+      fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
