@@ -618,6 +618,15 @@ export async function openCheckoutModal() {
   }
 
   function renderPayments() {
+    // Remember which input was focused before we wipe the DOM
+    const active = document.activeElement;
+    let focusedId = null;
+    let cursorPos = 0;
+    if (active && active.tagName === 'INPUT') {
+      focusedId = active.getAttribute('data-focus-id');
+      cursorPos = active.selectionStart;
+    }
+
     paymentRows.innerHTML = '';
     const paidSum = round2(state.payments.reduce((s, p) => s + Number(p.amount || 0), 0));
     const due = round2(t.grand + state.tipAmount - paidSum);
@@ -631,10 +640,10 @@ export async function openCheckoutModal() {
           : null,
       ].filter(Boolean)));
 
-      row.appendChild(numInput('Amount', p.amount, v => { p.amount = v; renderPayments(); }));
+      row.appendChild(numInput('Amount', p.amount, v => { p.amount = v; renderPayments(); }, `pay-${i}-amount`));
 
       if (p.mode === 'cash') {
-        row.appendChild(numInput('Tendered', p.tendered, v => { p.tendered = v; renderPayments(); }));
+        row.appendChild(numInput('Tendered', p.tendered, v => { p.tendered = v; renderPayments(); }, `pay-${i}-tendered`));
         const change = round2((p.tendered || 0) - (p.amount || 0));
         if (change > 0) {
           row.appendChild(el('div', { class: 'mt-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-center' }, [
@@ -643,9 +652,9 @@ export async function openCheckoutModal() {
           ]));
         }
       } else if (p.mode === 'card' || p.mode === 'upi') {
-        row.appendChild(textInput('Reference / Txn ID', p.reference, v => { p.reference = v; }));
+        row.appendChild(textInput('Reference / Txn ID', p.reference, v => { p.reference = v; }, `pay-${i}-ref`));
       } else if (p.mode === 'gift_card') {
-        row.appendChild(textInput('Gift Card Code', p.reference, v => { p.reference = v.toUpperCase(); }));
+        row.appendChild(textInput('Gift Card Code', p.reference, v => { p.reference = v.toUpperCase(); }, `pay-${i}-gift`));
       }
 
       paymentRows.appendChild(row);
@@ -654,23 +663,47 @@ export async function openCheckoutModal() {
     paymentRows.appendChild(el('div', {
       class: `text-sm px-3 py-2 rounded-lg ${due > 0.01 ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`,
     }, due > 0.01 ? `Balance due: ${fmtMoney(due)}` : 'Paid in full'));
+
+    // Restore focus and cursor position
+    if (focusedId) {
+      const newEl = document.querySelector(`[data-focus-id="${focusedId}"]`);
+      if (newEl) {
+        newEl.focus();
+        if (newEl.setSelectionRange) {
+          try {
+            newEl.setSelectionRange(cursorPos, cursorPos);
+          } catch (e) {
+            // Ignore if browser blocks it
+          }
+        }
+      }
+    }
   }
 
-  function numInput(label, value, onChange) {
+  function numInput(label, value, onChange, focusId = null) {
     return el('div', {}, [
       el('label', { class: 'block text-xs text-slate-500 mb-1' }, label),
       el('input', {
-        type: 'number', step: '0.01', value,
+        type: 'text', 
+        inputmode: 'decimal',
+        value,
+        'data-focus-id': focusId,
         class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
-        oninput: e => onChange(Number(e.target.value || 0)),
+        oninput: e => {
+          const val = e.target.value;
+          // Only allow numbers and a single decimal point
+          if (!/^\d*\.?\d*$/.test(val)) return;
+          onChange(Number(val || 0));
+        },
       }),
     ]);
   }
-  function textInput(label, value, onChange) {
+  function textInput(label, value, onChange, focusId = null) {
     return el('div', {}, [
       el('label', { class: 'block text-xs text-slate-500 mb-1' }, label),
       el('input', {
         type: 'text', value,
+        'data-focus-id': focusId,
         class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
         oninput: e => onChange(e.target.value),
       }),
