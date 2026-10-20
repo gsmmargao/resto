@@ -6,22 +6,36 @@ import { renderCartPanel, addToCart, clearCart, loadOrderIntoCart } from './cart
 import { renderTablesView, loadTables, renderTablePicker } from './tables.js';
 import { sendKOT } from './kot.js';
 import { openCheckoutModal } from './billing.js';
-import { publishCart, startPosBridge } from './customer-display.js';
 import { navigate } from '../router.js';
 
 let realtimeChannel = null;
 
 export async function renderDashboard(root) {
   root.innerHTML = '';
-  await loadTables();
-  await refreshOpenOrders();
+  try {
+    await loadTables();
+    await refreshOpenOrders();
+  } catch (e) {
+    console.error("Failed to load data", e);
+  }
 
   const wrapper = el('div', { class: 'h-full flex flex-col' });
+
+  // If a table is already selected, start in POS view, else start in Tables view
+  const startView = store.state.cart.tableId ? 'pos' : 'tables';
+  
   const subnav = el('div', { class: 'flex items-center gap-2 p-2 border-b border-slate-200 bg-white' }, [
-    tab('POS', 'pos', true),
-    tab('Tables', 'tables'),
-    tab('Orders', 'orders'),
-  ]);
+    tab('Tables', 'tables', startView === 'tables'),
+    tab('Orders', 'orders', startView === 'orders'),
+    startView === 'pos' ? el('button', {
+      class: 'px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 ml-auto',
+      onclick: () => {
+        store.state.cart.tableId = null;
+        navigate('dashboard');
+      },
+    }, '← Back to Tables') : null,
+  ].filter(Boolean));
+
   const content = el('div', { class: 'flex-1 min-h-0 overflow-hidden' });
   wrapper.appendChild(subnav);
   wrapper.appendChild(content);
@@ -42,7 +56,9 @@ export async function renderDashboard(root) {
       class: `px-3 py-1.5 rounded-lg text-sm font-medium ${active ? 'bg-indigo-600 text-white' : 'text-slate-700 hover:bg-slate-100'}`,
       onclick: (e) => {
         [...subnav.children].forEach(c => {
-          c.className = c.className.replace('bg-indigo-600 text-white', 'text-slate-700 hover:bg-slate-100');
+          if (c.tagName === 'BUTTON' && c.textContent !== '← Back to Tables') {
+            c.className = c.className.replace('bg-indigo-600 text-white', 'text-slate-700 hover:bg-slate-100');
+          }
         });
         e.currentTarget.className = 'px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white';
         switchView(key);
@@ -82,6 +98,7 @@ function safeCheckout() {
 
 function renderPOS(root) {
   const layout = el('div', { class: 'h-full grid grid-cols-12 gap-0' });
+
   const left  = el('div', { class: 'col-span-7 lg:col-span-8 h-full flex flex-col border-r border-slate-200 min-h-0' });
   const right = el('div', { class: 'col-span-5 lg:col-span-4 h-full flex flex-col min-h-0' });
 
@@ -91,10 +108,11 @@ function renderPOS(root) {
     onPickTable: () => renderTablePicker(document.body, (t) => {
       store.state.cart.tableId = t.id;
       window.dispatchEvent(new CustomEvent('cart:changed'));
+      navigate('dashboard');
     }),
     onCheckout: safeCheckout,
-    onSendKOT: handleSendKOT,
-    onClear: () => { clearCart(); toast('Cart cleared', 'info', 1200); },
+    onSendKOT:  handleSendKOT,
+    onClear:    () => { clearCart(); toast('Cart cleared', 'info', 1200); },
   };
 
   const paintCart = () => {
@@ -110,22 +128,8 @@ function renderPOS(root) {
   paintCart();
   requestAnimationFrame(paintCart);
 
-  // Start the POS-side bridge (responds to display's "give me state" pings)
-  startPosBridge();
-
-  const onCartChanged = () => {
-    paintCart();
-    // Broadcast to any open customer display
-    const cart = store.state.cart;
-    const tableName = store.state.tables.find(t => t.id === cart.tableId)?.name || null;
-    publishCart(cart, { tableName });
-  };
+  const onCartChanged = () => paintCart();
   window.addEventListener('cart:changed', onCartChanged);
-
-  // Publish an initial snapshot so a newly-opened display is in sync
-  publishCart(store.state.cart, {
-    tableName: store.state.tables.find(t => t.id === store.state.cart.tableId)?.name || null,
-  });
 
   const watcher = setInterval(() => {
     if (!right.isConnected) {
@@ -138,99 +142,27 @@ function renderPOS(root) {
     const id = await sendKOT();
     if (id) { await loadTables(); await refreshOpenOrders(); }
   }
-
 }
 
 function renderTables(root) {
-  renderTablesView(root, (table, openOrder) => {
-    openTableActionModal(table, openOrder, root);
-  });
-}
-
-function openTableActionModal(table, openOrder, root) {
-  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-3' });
-
-  card.appendChild(el('div', { class: 'mb-2' }, [
-    el('h3', { class: 'font-bold text-lg text-slate-800' }, `Table ${table.name}`),
-    el('p', { class: 'text-xs text-slate-500' }, `Status: ${openOrder ? 'Occupied' : table.status.toUpperCase()}`)
-  ]));
-
-  // 1. If there is an active order
-  if (openOrder) {
-    card.appendChild(el('div', { class: 'p-3 bg-slate-50 rounded-lg border border-slate-200 mb-3' }, [
-      el('div', { class: 'text-sm font-semibold text-slate-800' }, `#${openOrder.order_number}`),
-      el('div', { class: 'text-xs text-slate-500' }, `Total: ${fmtMoney(openOrder.grand_total)}`)
-    ]));
-
-    card.appendChild(el('button', {
-      class: 'w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm',
-      onclick: () => { overlay.remove(); openOrderIntoCart(openOrder.id, openOrder.order_number); }
-    }, 'Load Order to Cart'));
-
-    card.appendChild(el('button', {
-      class: 'w-full py-2.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-700 font-semibold text-sm',
-      onclick: async () => {
-        const ok = await confirmDialog('Cancel this order and clear the table? All unpainted items will be lost.', 'Cancel Order?');
-        if (ok) {
-          await supabase.from('orders').update({ status: 'cancelled' }).eq('id', openOrder.id);
-          await supabase.from('dining_tables').update({ status: 'available', current_order_id: null }).eq('id', table.id);
-          toast('Table cleared', 'success');
-          overlay.remove();
-          await loadTables();
-          paint(root); // Repaint tables view
-        }
-      }
-    }, 'Cancel Order & Clear Table'));
-
-  } 
-  // 2. If table is in cleaning status
-  else if (table.status === 'cleaning') {
-    card.appendChild(el('p', { class: 'text-sm text-slate-600 mb-4' }, 'This table is currently marked for cleaning.'));
-    card.appendChild(el('button', {
-      class: 'w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm',
-      onclick: async () => {
-        await supabase.from('dining_tables').update({ status: 'available' }).eq('id', table.id);
-        toast('Table is now available', 'success');
-        overlay.remove();
-        await loadTables();
-        paint(root);
-      }
-    }, 'Mark as Available'));
-  } 
-  // 3. If table is available
-  else {
-    card.appendChild(el('button', {
-      class: 'w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm',
-      onclick: () => {
+  renderTablesView(root, async (table, openOrder) => {
+    if (openOrder) {
+      const ok = await confirmDialog(
+        `Table ${table.name} has an open order #${openOrder.order_number} for ${fmtMoney(openOrder.grand_total)}.\n\nLoad it into the cart?`,
+        'Open order found',
+      );
+      if (ok) await openOrderIntoCart(openOrder.id, openOrder.order_number);
+    } else {
+      const ok = await confirmDialog(`Start a new order at table ${table.name}?`, 'New order');
+      if (ok) {
         clearCart();
         store.state.cart.orderType = 'dine_in';
         store.state.cart.tableId = table.id;
         window.dispatchEvent(new CustomEvent('cart:changed'));
-        overlay.remove();
         navigate('dashboard');
       }
-    }, 'Start New Order'));
-    
-    card.appendChild(el('button', {
-      class: 'w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm',
-      onclick: async () => {
-        await supabase.from('dining_tables').update({ status: 'cleaning' }).eq('id', table.id);
-        toast('Marked for cleaning', 'info');
-        overlay.remove();
-        await loadTables();
-        paint(root);
-      }
-    }, 'Mark for Cleaning'));
-  }
-
-  card.appendChild(el('button', {
-    class: 'w-full py-2 text-slate-400 hover:text-slate-700 text-xs mt-2',
-    onclick: () => overlay.remove()
-  }, 'Close'));
-
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
+    }
+  });
 }
 
 function renderOrders(root) {
@@ -267,6 +199,7 @@ function subscribeRealtime(onChange) {
   if (realtimeChannel) return;
   const outletId = store.state.outlet?.id;
   if (!outletId) return;
+
   realtimeChannel = supabase
     .channel('pos-live')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders',        filter: `outlet_id=eq.${outletId}` }, onChange)
