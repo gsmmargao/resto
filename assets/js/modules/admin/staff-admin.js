@@ -485,13 +485,24 @@ function openSecurityModal(root) {
           const currentSettings = store.state.tenant.settings || {};
           const updatedSettings = { ...currentSettings, cancel_password: newPass };
 
-          const { error: dbErr, count } = await supabase.from('tenants')
+          // 1. Perform the update
+          const { error: dbErr } = await supabase.from('tenants')
             .update({ settings: updatedSettings })
-            .eq('id', store.state.tenant.id)
-            .select();
+            .eq('id', store.state.tenant.id);
             
           if (dbErr) throw dbErr;
-          if (!count) throw new Error('Database rejected the update (RLS issue)');
+
+          // 2. Verify it actually saved by fetching it back
+          const { data: verifyData, error: vErr } = await supabase
+            .from('tenants')
+            .select('settings')
+            .eq('id', store.state.tenant.id)
+            .single();
+
+          if (vErr) throw vErr;
+          if (verifyData?.settings?.cancel_password !== newPass) {
+            throw new Error('Database rejected the update (RLS issue)');
+          }
           
           // 3. Update local store
           store.state.tenant.settings = updatedSettings;
