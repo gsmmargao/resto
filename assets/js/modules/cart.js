@@ -339,9 +339,32 @@ async function openCancelOrderModal(onClear) {
           return;
         }
 
-        btn.disabled = true; btn.textContent = 'Cancelling…';
+        btn.disabled = true; btn.textContent = 'Verifying…';
         
         try {
+          // 1. Fetch the LATEST password from the database to avoid cache issues
+          const { data: tenantData, error: tErr } = await supabase
+            .from('tenants')
+            .select('settings')
+            .eq('id', store.state.tenant.id)
+            .single();
+            
+          if (tErr) throw tErr;
+
+          const correctPass = tenantData?.settings?.cancel_password || '1234';
+          
+          // 2. Check password
+          if (passIn.value !== correctPass) {
+            toast('Incorrect Admin Password', 'error');
+            btn.disabled = false; 
+            btn.textContent = 'Confirm Cancel';
+            passIn.focus();
+            return;
+          }
+
+          btn.textContent = 'Cancelling…';
+
+          // 3. Proceed with cancellation
           const { error } = await supabase.rpc('cancel_entire_order', { 
             p_order_id: store.state.cart.orderId, 
             p_reason: reasonIn.value 
