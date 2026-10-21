@@ -26,13 +26,14 @@ export function isOnline() { return state.online; }
 async function probe() {
   if (!navigator.onLine) return false;
   try {
-    // Ping Supabase directly to check internet, not the local server
-    const res = await fetch(`${CONFIG.SUPABASE_URL}/rest/v1/`, {
+    // Standard captive portal check to verify internet without auth/CORS issues
+    await fetch('https://www.google.com/generate_204', {
       method: 'HEAD',
+      mode: 'no-cors',
       cache: 'no-store',
       signal: AbortSignal.timeout(3000),
     });
-    return res.ok || res.status === 401; 
+    return true;
   } catch {
     return false;
   }
