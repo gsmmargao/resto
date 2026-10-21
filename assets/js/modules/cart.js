@@ -353,8 +353,14 @@ async function openCancelOrderModal(onClear) {
 
           const correctPass = tenantData?.settings?.cancel_password || '1234';
           
+          // Trim inputs to avoid hidden spaces breaking the match
+          const enteredPass = passIn.value.trim();
+          const expectedPass = correctPass.trim();
+          
+          console.log('[Security] Checking password. Entered:', enteredPass, 'Expected:', expectedPass);
+
           // 2. Check password
-          if (passIn.value !== correctPass) {
+          if (enteredPass !== expectedPass) {
             toast('Incorrect Admin Password', 'error');
             btn.disabled = false; 
             btn.textContent = 'Confirm Cancel';
