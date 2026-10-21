@@ -427,53 +427,78 @@ const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm fo
 // SECURITY SETTINGS MODAL (Cancel Order Password)
 // ============================================================
 function openSecurityModal(root) {
-  const currentPass = store.state.tenant?.settings?.cancel_password || '';
+  const hasExisting = !!store.state.tenant?.settings?.cancel_password;
   
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4' });
   const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4' });
   
   card.appendChild(el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Security Settings'));
-  card.appendChild(el('p', { class: 'text-xs text-slate-500' }, 'Set the password required to void or cancel an entire order.'));
+  card.appendChild(el('p', { class: 'text-xs text-slate-500' }, hasExisting 
+    ? 'A cancel password is active. Enter a new one below to change it.' 
+    : 'Set the password required to void or cancel an entire order.'));
 
-  const passIn = el('input', { 
-    type: 'text', 
-    value: currentPass, 
-    placeholder: 'Enter password (e.g. 1234)', 
-    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono tracking-widest text-center' 
+  // New Cancel Password Input (Masked)
+  const newPassIn = el('input', { 
+    type: 'password', 
+    placeholder: 'New Cancel Password', 
+    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono' 
   });
 
-  card.appendChild(el('label', { class: 'block text-left text-xs font-medium text-slate-600 mb-1 mt-2' }, 'Admin Password'));
-  card.appendChild(passIn);
+  // Admin Login Password Input (Masked) for Authorization
+  const adminPassIn = el('input', { 
+    type: 'password', 
+    placeholder: 'Your Admin Login Password', 
+    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono mt-2' 
+  });
 
-  const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' }, [
+  card.appendChild(el('label', { class: 'block text-left text-xs font-medium text-slate-600 mb-1 mt-2' }, 'New Cancel Password'));
+  card.appendChild(newPassIn);
+  
+  card.appendChild(el('label', { class: 'block text-left text-xs font-medium text-slate-600 mb-1 mt-2' }, 'Verify Identity (Admin Password)'));
+  card.appendChild(adminPassIn);
+
+  const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-4' }, [
     el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Cancel'),
     el('button', {
       class: 'py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm',
       onclick: async (e) => {
         const btn = e.currentTarget;
-        const newPass = passIn.value.trim();
-        if (!newPass) { toast('Password cannot be empty', 'warn'); return; }
+        const newPass = newPassIn.value.trim();
+        const adminPass = adminPassIn.value.trim();
+        
+        if (!newPass) { toast('New password cannot be empty', 'warn'); return; }
+        if (!adminPass) { toast('Please enter your admin password to confirm', 'warn'); return; }
 
-        btn.disabled = true; btn.textContent = 'Saving…';
+        btn.disabled = true; btn.textContent = 'Verifying…';
+        
         try {
-          // Update tenant settings JSON
+          // 1. Verify the admin's identity using their login password
+          const userEmail = store.state.session?.user?.email;
+          const { error: authErr } = await supabase.auth.signInWithPassword({
+            email: userEmail,
+            password: adminPass
+          });
+
+          if (authErr) throw new Error('Incorrect admin password');
+
+          // 2. Save the new cancel password to tenant settings
           const currentSettings = store.state.tenant.settings || {};
           const updatedSettings = { ...currentSettings, cancel_password: newPass };
 
-          const { error } = await supabase.from('tenants')
+          const { error: dbErr } = await supabase.from('tenants')
             .update({ settings: updatedSettings })
             .eq('id', store.state.tenant.id);
             
-          if (error) throw error;
+          if (dbErr) throw dbErr;
           
-          // Update local store
+          // 3. Update local store
           store.state.tenant.settings = updatedSettings;
           
-          toast('Password updated successfully!', 'success');
+          toast('Cancel password updated successfully!', 'success');
           overlay.remove();
         } catch (err) {
           console.error(err);
-          toast('Failed: ' + err.message, 'error');
+          toast(err.message || 'Failed to update password', 'error');
           btn.disabled = false; btn.textContent = 'Save';
         }
       },
@@ -483,5 +508,5 @@ function openSecurityModal(root) {
 
   overlay.appendChild(card);
   document.body.appendChild(overlay);
-  setTimeout(() => passIn.focus(), 50);
+  setTimeout(() => newPassIn.focus(), 50);
 }
