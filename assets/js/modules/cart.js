@@ -66,7 +66,6 @@ export async function loadOrderIntoCart(orderId) {
     name: it.name_snapshot, variantName: it.variant_name,
     qty: Number(it.quantity), unitPrice: Number(it.unit_price),
     taxRate: Number(it.tax_rate), taxInclusive: !!it.tax_inclusive,
-      status: it.status,
     stationId: it.station_id, addons: [], notes: it.notes,
   }));
 
@@ -85,24 +84,14 @@ export async function loadOrderIntoCart(orderId) {
 
 function _computeTotals(cart) {
   let gross = 0, taxable = 0, tax = 0;
-  const isGst = store.state.tenant?.settings?.is_gst_enabled !== false;
-
   (cart.items || []).forEach(l => {
     const lineGross = l.qty * l.unitPrice;
     gross += lineGross;
-    
-    if (!isGst) {
-      // Non-GST: Tax is 0, everything is taxable
-      taxable += lineGross;
-      tax += 0;
+    if (l.taxInclusive) {
+      const base = lineGross / (1 + l.taxRate);
+      taxable += base; tax += lineGross - base;
     } else {
-      // GST mode
-      if (l.taxInclusive) {
-        const base = lineGross / (1 + l.taxRate);
-        taxable += base; tax += lineGross - base;
-      } else {
-        taxable += lineGross; tax += lineGross * l.taxRate;
-      }
+      taxable += lineGross; tax += lineGross * l.taxRate;
     }
   });
   let discountAmount = 0;
@@ -123,7 +112,7 @@ function _computeTotals(cart) {
 
 export function recalcCart() { _computeTotals(store.state.cart); notifyCartChanged(); }
 
-export function renderCartPanel(root, { onCheckout, onSendKOT, onSaveDraft, onClear, onPickTable }) {
+export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTable }) {
   root.innerHTML = '';
   const cart = store.state.cart;
   const t = cart.totals || { gross:0, taxable:0, tax:0, discount:0, serviceCharge:0, roundOff:0, grand:0 };
@@ -174,48 +163,54 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onSaveDraft, onCl
   ].filter(Boolean));
 
   const hasNewItems = cart.items.some(l => !l._saved);
+  
   const actions = el('div', { class: 'p-3 bg-white border-t border-slate-200 grid grid-cols-2 gap-2' }, [
     el('button', {
       class: 'col-span-2 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium',
       onclick: () => {
-        if (cart.orderId && !hasNewItems) onClear();
-        else if (cart.orderId) { cart.items = cart.items.filter(l => l._saved); _computeTotals(cart); notifyCartChanged(); }
-        else onClear();
+        if (cart.orderId && !hasNewItems) {
+          onClear(); // Cancels DB order and clears UI
+        } else if (cart.orderId) {
+          cart.items = cart.items.filter(l => l._saved);
+          _computeTotals(cart);
+          notifyCartChanged();
+        } else {
+          onClear();
+        }
       },
     }, cart.orderId ? 'Discard New Items' : 'Clear Cart'),
+
+    cart.orderId ? el('button', {
+      class: 'col-span-2 py-2.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-sm font-medium',
+      onclick: () => openCancelOrderModal(onClear),
+    }, 'Cancel Entire Order') : null,
 
     el('button', {
       class: `col-span-2 py-2.5 rounded-lg text-sm font-semibold transition ${hasNewItems ? 'bg-amber-500 hover:bg-amber-600 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
       onclick: () => { if (hasNewItems) onSendKOT(); },
     }, hasNewItems ? (cart.orderId ? 'Send New Items (KOT)' : 'Send to Kitchen (KOT)') : 'No New Items'),
+
     el('button', {
       class: `col-span-2 py-3 rounded-lg text-base font-semibold shadow-sm transition ${cart.orderId ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
       onclick: () => { if (cart.orderId) onCheckout(); else toast('Send to kitchen first', 'warn'); },
     }, cart.orderId ? `Checkout • ${fmtMoney(t.grand)}` : 'Checkout • —'),
-  ]);
+  ].filter(Boolean));
 
-  root.appendChild(header); root.appendChild(lines); root.appendChild(totals); root.appendChild(actions);
+  root.appendChild(header);
+  root.appendChild(lines);
+  root.appendChild(totals);
+  root.appendChild(actions);
 }
 
 function buildLine(l) {
   const isSaved = !!l._saved;
-  const isSent = ['sent_to_kitchen', 'preparing', 'ready', 'served'].includes(l.status);
-  const canVoid = ['owner', 'admin', 'manager'].includes(store.state.member?.role);
-
-  let badge = null;
-  if (isSaved) {
-    badge = isSent 
-      ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wide shrink-0' }, 'SENT')
-      : el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold uppercase tracking-wide shrink-0' }, 'HELD');
-  }
-
   return el('div', {
     class: `px-3 py-2 border-b border-slate-200 ${isSaved ? 'bg-slate-100/60' : 'bg-white'}`,
   }, [
     el('div', { class: 'flex justify-between items-start gap-2' }, [
       el('div', { class: 'flex-1 min-w-0' }, [
         el('div', { class: 'flex items-center gap-1.5 mb-0.5' }, [
-          badge,
+          isSaved ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wide shrink-0' }, 'Sent') : null,
           el('span', { class: 'text-sm font-medium text-slate-800 truncate' }, l.name),
         ].filter(Boolean)),
         l.variantName ? el('div', { class: 'text-xs text-slate-500' }, l.variantName) : null,
@@ -223,13 +218,14 @@ function buildLine(l) {
       ].filter(Boolean)),
       el('div', { class: 'text-sm font-semibold text-slate-800 shrink-0' }, fmtMoney(l.qty * l.unitPrice)),
     ]),
+
     isSaved
-      ? el('div', { class: 'mt-1 flex items-center justify-between' }, [
-          el('div', { class: 'text-[10px] text-slate-400 italic' }, `Qty ${l.qty} (locked)`),
-          (canVoid && l._dbId) ? el('button', { 
-            class: 'text-[10px] font-bold text-red-500 hover:text-red-700 underline', 
-            onclick: () => voidSavedItem(l) 
-          }, 'Void Item') : null,
+      ? el('div', { class: 'mt-1 flex justify-between items-center' }, [
+          el('div', { class: 'text-[10px] text-slate-400 italic' }, `Fired • Qty ${l.qty} (locked)`),
+          el('button', {
+            class: 'text-[10px] font-bold text-red-500 hover:text-red-700 underline',
+            onclick: () => voidSavedItem(l),
+          }, 'Void Item'),
         ])
       : el('div', { class: 'mt-1.5 flex items-center justify-between' }, [
           el('div', { class: 'flex items-center gap-1' }, [
@@ -242,9 +238,6 @@ function buildLine(l) {
   ]);
 }
 
-// ============================================================
-// VOID ITEM MODAL
-// ============================================================
 async function voidSavedItem(l) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
   const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4' });
@@ -288,7 +281,6 @@ async function voidSavedItem(l) {
           toast('Item voided successfully', 'success');
           overlay.remove();
           
-          // Remove from local cart state
           const cart = store.state.cart;
           cart.items = cart.items.filter(item => item.id !== l.id);
           _computeTotals(cart);
@@ -306,4 +298,72 @@ async function voidSavedItem(l) {
 
   overlay.appendChild(card);
   document.body.appendChild(overlay);
+}
+
+// ============================================================
+// CANCEL ENTIRE ORDER MODAL (Password Protected)
+// ============================================================
+async function openCancelOrderModal(onClear) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4 text-center' });
+  
+  card.appendChild(el('div', { class: 'w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto text-xl mb-2' }, '⚠️'));
+  card.appendChild(el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Cancel Entire Order?'));
+  card.appendChild(el('p', { class: 'text-xs text-slate-500' }, 'This will void all items, cancel the KOTs, and free the table.'));
+  
+  const reasonIn = el('select', { class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-red-500' }, [
+    el('option', { value: 'Customer left without ordering' }, 'Customer left without ordering'),
+    el('option', { value: 'Wrong table selected' }, 'Wrong table selected'),
+    el('option', { value: 'Duplicate order' }, 'Duplicate order'),
+    el('option', { value: 'Other' }, 'Other')
+  ]);
+
+  const passIn = el('input', { type: 'password', placeholder: 'Enter Admin Password (1234)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 text-center tracking-widest' });
+
+  card.appendChild(el('label', { class: 'block text-left text-xs font-medium text-slate-600 mb-1 mt-2' }, 'Reason for cancellation'));
+  card.appendChild(reasonIn);
+  card.appendChild(el('label', { class: 'block text-left text-xs font-medium text-slate-600 mb-1' }, 'Admin Password'));
+  card.appendChild(passIn);
+
+  const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' }, [
+    el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Go Back'),
+    el('button', {
+      class: 'py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-sm',
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        
+        // Simple hardcoded password check for admin override
+        if (passIn.value !== '1234') {
+          toast('Incorrect Admin Password', 'error');
+          passIn.focus();
+          return;
+        }
+
+        btn.disabled = true; btn.textContent = 'Cancelling…';
+        
+        try {
+          const { error } = await supabase.rpc('cancel_entire_order', { 
+            p_order_id: store.state.cart.orderId, 
+            p_reason: reasonIn.value 
+          });
+          
+          if (error) throw error;
+          
+          toast('Order cancelled and table cleared', 'success');
+          overlay.remove();
+          await onClear(); // Calls the clear logic in dashboard.js
+          
+        } catch (err) {
+          console.error(err);
+          toast('Failed: ' + err.message, 'error');
+          btn.disabled = false; btn.textContent = 'Confirm Cancel';
+        }
+      }
+    }, 'Confirm Cancel')
+  ]);
+  card.appendChild(btnRow);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  setTimeout(() => passIn.focus(), 50);
 }

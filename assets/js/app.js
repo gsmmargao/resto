@@ -262,8 +262,11 @@ async function boot() {
   setTimeout(() => sync(), 1500);
 }
 
+let isRendered = false;
 onAuthChange(async (event) => {
   if (event === 'SIGNED_IN') {
+    if (isRendered) return;
+    isRendered = true;
     const ctx = await loadContext();
     if (ctx?.member) {
       await loadCatalog();

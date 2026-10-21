@@ -112,7 +112,14 @@ function renderPOS(root) {
     }),
     onCheckout: safeCheckout,
     onSendKOT:  handleSendKOT,
-    onClear:    () => { clearCart(); toast('Cart cleared', 'info', 1200); },
+    onClear:    async () => { 
+      if (store.state.cart.orderId) {
+        await supabase.from('orders').update({ status: 'cancelled' }).eq('id', store.state.cart.orderId);
+        await loadTables(); // Refresh tables to turn green
+      }
+      clearCart(); 
+      toast('Order cancelled & table cleared', 'info', 2000); 
+    },
   };
 
   const paintCart = () => {
