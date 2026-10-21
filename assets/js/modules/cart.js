@@ -357,7 +357,11 @@ async function openCancelOrderModal(onClear) {
           const enteredPass = passIn.value.trim();
           const expectedPass = correctPass.trim();
           
-          console.log('[Security] Checking password. Entered:', enteredPass, 'Expected:', expectedPass);
+          console.log('--- PASSWORD DEBUG ---');
+          console.log('What you typed:', enteredPass);
+          console.log('What the DB says:', expectedPass);
+          console.log('Raw settings object:', tenantData?.settings);
+          console.log('----------------------');
 
           // 2. Check password
           if (enteredPass !== expectedPass) {
