@@ -102,7 +102,7 @@ function _computeTotals(cart) {
 
   const factor = taxable > 0 ? (taxable - discountAmount) / taxable : 0;
   const finalTaxable = taxable - discountAmount;
-  const finalTax = tax * factor;
+  const finalTax = 0; // FORCED NO TAX
   const serviceCharge = (finalTaxable + finalTax) * (cart.serviceChargePct || 0);
   let grand = finalTaxable + finalTax + serviceCharge + (cart.deliveryCharge || 0) + (cart.tipAmount || 0);
   const roundOff = Math.round(grand) - grand;
@@ -154,7 +154,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
   const totals = el('div', { class: 'bg-white border-t border-slate-200 p-3 text-sm' }, [
     row('Subtotal', fmtMoney(t.gross)),
     t.discount > 0 ? row('Discount', `− ${fmtMoney(t.discount)}`, 'text-emerald-600') : null,
-    row('Tax', fmtMoney(t.tax)),
+    // Tax row removed
     t.serviceCharge > 0 ? row('Service Charge', fmtMoney(t.serviceCharge)) : null,
     t.roundOff !== 0 ? row('Round Off', fmtMoney(t.roundOff)) : null,
     el('div', { class: 'flex justify-between pt-2 mt-2 border-t border-dashed border-slate-300 text-base font-semibold text-slate-900' }, [

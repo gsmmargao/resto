@@ -187,7 +187,7 @@ export async function renderCustomerDisplay(root) {
     if (Number(t.discount) > 0) {
       wrap2.appendChild(row('Discount', `− ${fmtMoney(t.discount)}`, 'text-emerald-300'));
     }
-    wrap2.appendChild(row('Taxable', fmtMoney(t.gross)));
+//     wrap2.appendChild(row('Taxable', fmtMoney(t.gross)));
     wrap2.appendChild(row('CGST',    fmtMoney(t.tax / 2)));
     wrap2.appendChild(row('SGST',    fmtMoney(t.tax / 2)));
 

@@ -191,9 +191,9 @@ export function buildReceiptBytes(data) {
   b.line(padLine('Subtotal', data.totals.gross.toFixed(2), W));
   if (data.totals.discount > 0)
     b.line(padLine('Discount', `-${data.totals.discount.toFixed(2)}`, W));
-  b.line(padLine('Taxable',  data.totals.taxable.toFixed(2), W));
-  if (data.totals.cgst > 0) b.line(padLine('CGST', data.totals.cgst.toFixed(2), W));
-  if (data.totals.sgst > 0) b.line(padLine('SGST', data.totals.sgst.toFixed(2), W));
+//   b.line(padLine('Taxable',  data.totals.taxable.toFixed(2), W));
+//   if (data.totals.cgst > 0) b.line(padLine('CGST', data.totals.cgst.toFixed(2), W));
+//   if (data.totals.sgst > 0) b.line(padLine('SGST', data.totals.sgst.toFixed(2), W));
   if (data.totals.igst > 0) b.line(padLine('IGST', data.totals.igst.toFixed(2), W));
   if (data.totals.serviceCharge > 0)
     b.line(padLine('Svc Charge', data.totals.serviceCharge.toFixed(2), W));

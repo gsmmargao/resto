@@ -30,3 +30,6 @@ export const store = {
     (listeners.get('*') || []).forEach(fn => fn(key, this.state[key], this.state));
   },
 };
+
+// Expose store globally so our quick action script can access it
+window.store = store;

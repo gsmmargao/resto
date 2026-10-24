@@ -22,14 +22,21 @@ export function buildReceiptData({ tenant, outlet, order, items, invoice, paymen
       phone: customer?.phone || '',
       gstin: customer?.gstin || '',
     },
-    items: (items || []).map(it => ({
-      name:    it.name_snapshot + (it.variant_name ? ` (${it.variant_name})` : ''),
-      qty:     Number(it.quantity),
-      rate:    Number(it.unit_price),
-      amount:  Number(it.line_total),
-      taxRate: Number(it.tax_rate),
-      hsn:     it.hsn_code || '996331',
-    })),
+    items: (items || []).map(it => {
+      // Calculate pure amount by stripping any tax that might have been saved previously
+      const lineTotal = Number(it.line_total || 0);
+      const taxAmount = Number(it.tax_amount || 0);
+      const pureAmount = lineTotal - taxAmount;
+
+      return {
+        name:    it.name_snapshot ? (it.name_snapshot + (it.variant_name ? ` (${it.variant_name})` : '')) : (it.description || 'Unknown Item'),
+        qty:     Number(it.quantity),
+        rate:    Number(it.unit_price),
+        amount:  pureAmount, // Now shows 279.00 instead of 292.95
+        taxRate: Number(it.tax_rate),
+        hsn:     it.hsn_code || '996331',
+      };
+    }),
     totals: {
       gross:         Number(invoice.gross_total),
       discount:      Number(invoice.discount_total),
@@ -86,10 +93,6 @@ export function buildReceiptText(data) {
 
   push(padLine('Subtotal',  data.totals.gross.toFixed(2), W));
   if (data.totals.discount > 0) push(padLine('Discount', `-${data.totals.discount.toFixed(2)}`, W));
-  push(padLine('Taxable',   data.totals.taxable.toFixed(2), W));
-  if (data.totals.cgst > 0) push(padLine('CGST', data.totals.cgst.toFixed(2), W));
-  if (data.totals.sgst > 0) push(padLine('SGST', data.totals.sgst.toFixed(2), W));
-  if (data.totals.igst > 0) push(padLine('IGST', data.totals.igst.toFixed(2), W));
   if (data.totals.serviceCharge > 0) push(padLine('Svc Charge', data.totals.serviceCharge.toFixed(2), W));
   if (data.totals.roundOff) push(padLine('Round Off', data.totals.roundOff.toFixed(2), W));
   hr('-');
@@ -143,10 +146,6 @@ export function buildReceiptHTML(data) {
       <hr>
       ${line('Subtotal',  '₹' + data.totals.gross.toFixed(2))}
       ${data.totals.discount > 0 ? line('Discount', '-₹' + data.totals.discount.toFixed(2)) : ''}
-      ${line('Taxable',   '₹' + data.totals.taxable.toFixed(2))}
-      ${data.totals.cgst > 0 ? line('CGST', '₹' + data.totals.cgst.toFixed(2)) : ''}
-      ${data.totals.sgst > 0 ? line('SGST', '₹' + data.totals.sgst.toFixed(2)) : ''}
-      ${data.totals.igst > 0 ? line('IGST', '₹' + data.totals.igst.toFixed(2)) : ''}
       ${data.totals.roundOff ? line('Round Off', '₹' + data.totals.roundOff.toFixed(2)) : ''}
       <hr>
       <div class="row bold big"><span>TOTAL</span><span>₹${data.totals.grand.toFixed(2)}</span></div>

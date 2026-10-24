@@ -71,7 +71,7 @@ export async function buildReceiptMessage({ invoice, order, items, customer, out
     ``,
     `Subtotal: ${vars.subtotal}`,
     Number(invoice?.discount_total) > 0 ? `Discount: -${vars.discount}` : null,
-    `Tax: ${vars.tax}`,
+
     `*Total: ${vars.total}*`,
     ``,
     vars.thank_you,
@@ -177,7 +177,7 @@ Here's your receipt from *{{restaurant}}*:
 {{items_list}}
 
 Subtotal: {{subtotal}}
-Tax: {{tax}}
+
 *Total: {{total}}*
 
 {{thank_you}}
