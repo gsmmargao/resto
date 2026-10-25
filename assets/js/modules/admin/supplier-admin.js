@@ -194,10 +194,16 @@ function renderLedgerFor(supplierId, root) {
       el('h3', { class: 'font-semibold text-slate-800 text-base' }, `Ledger — ${supplier.name}`),
       el('p', { class: 'text-xs text-slate-500' }, `Total Outstanding: `, el('span', { class: `font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}` }, fmtMoney(balance)))
     ]),
-    el('button', {
-      class: 'px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold shadow-sm',
-      onclick: () => openPaymentModal(root, supplier.id, balance),
-    }, '+ Record Payment'),
+    el('div', { class: 'flex gap-2' }, [
+      el('button', {
+        class: 'px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm',
+        onclick: () => openPurchaseModal(root, supplier.id),
+      }, '+ Record Purchase'),
+      el('button', {
+        class: 'px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold shadow-sm',
+        onclick: () => openPaymentModal(root, supplier.id, balance),
+      }, '+ Record Payment')
+    ]),
   ]));
 
   if (!ledger.length) {
@@ -313,7 +319,17 @@ function openPaymentModal(root, supplierId, maxBalance) {
   ]);
   const notesIn = el('input', { type: 'text', placeholder: 'Notes (optional)', class: inputCls });
 
-  card.appendChild(field('Amount *', amtIn));
+  const amtContainer = el('div', { class: 'flex gap-2 items-end' });
+  amtContainer.appendChild(field('Amount *', amtIn));
+  amtContainer.appendChild(el('button', {
+    type: 'button',
+    class: 'px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-lg border border-slate-300 mb-1 transition whitespace-nowrap',
+    onclick: () => { 
+      amtIn.value = maxBalance; 
+      if (amtIn.dispatchEvent) amtIn.dispatchEvent(new Event('input'));
+    }
+  }, 'Pay Full'));
+  card.appendChild(amtContainer);
   card.appendChild(field('Payment Mode *', modeIn));
   card.appendChild(field('Notes', notesIn));
 
@@ -361,4 +377,65 @@ function field(label, control) {
     el('label', { class: 'block text-xs font-medium text-slate-600 mb-1' }, label),
     control,
   ]);
+}
+
+
+function openPurchaseModal(root, supplierId) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4' });
+
+  card.appendChild(el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Record Purchase'));
+  card.appendChild(el('p', { class: 'text-xs text-slate-500' }, 'Select Credit to add this amount to the outstanding balance.'));
+  
+  const amtIn = el('input', { type: 'number', step: '0.01', placeholder: 'Amount', class: inputCls });
+  const modeIn = el('select', { class: inputCls }, [
+    el('option', { value: 'credit' }, 'Credit (Add to Outstanding)'),
+    el('option', { value: 'cash' }, 'Cash (Paid immediately)'),
+    el('option', { value: 'upi' }, 'UPI (Paid immediately)'),
+    el('option', { value: 'bank' }, 'Bank Transfer (Paid immediately)'),
+  ]);
+  const notesIn = el('input', { type: 'text', placeholder: 'Notes / Invoice Number (optional)', class: inputCls });
+
+  card.appendChild(field('Amount *', amtIn));
+  card.appendChild(field('Payment Mode *', modeIn));
+  card.appendChild(field('Notes', notesIn));
+
+  const footer = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' },[
+    el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Cancel'),
+    el('button', {
+      class: 'py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm',
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        const amount = Number(amtIn.value);
+        if (!amount || amount <= 0) { toast('Enter valid amount', 'warn'); return; }
+
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+          // Insert into purchases table (assuming standard table name 'purchases')
+          const payload = {
+            tenant_id: store.state.tenant.id,
+            supplier_id: supplierId,
+            total: amount,
+            payment_mode: modeIn.value,
+            notes: notesIn.value.trim() || null,
+            status: modeIn.value === 'credit' ? 'pending' : 'paid'
+          };
+          
+          const { error } = await supabase.from('purchases').insert(payload);
+          if (error) throw error;
+          
+          toast('Purchase recorded!', 'success');
+          overlay.remove();
+          await refresh();
+          paint(root);
+        } catch (err) {
+          toast('Failed: ' + err.message, 'error');
+          btn.disabled = false; btn.textContent = 'Save Purchase';
+        }
+      },
+    }, 'Save Purchase'),
+  ]);
+  card.appendChild(footer);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
 }
