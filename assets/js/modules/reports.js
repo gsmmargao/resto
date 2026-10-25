@@ -1124,28 +1124,18 @@ async function openBillReprintModal(invoiceId) {
           btn.disabled = true;
           
           try {
-            const receiptData = buildReceiptData({
-              tenant: store.state.tenant, outlet: store.state.outlet, order: modalOrder,
-              items: modalItems, invoice: modalInvoice, payments: modalPayments,
-              customer: modalCustomer, tableName: modalTableName,
+            // Use the receiptData already built at the top of the function
+            const { CONFIG } = await import('../../../config.js');
+            const printUrl = `https://${CONFIG.LOCAL_SERVER_IP || '192.168.100.19'}:3000/api/print-bill`;
+            
+            const res = await fetch(printUrl, {
+              method: 'POST', 
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(receiptData)
             });
-
-            if (window.CONFIG && window.CONFIG.LOCAL_SERVER_IP) {
-                await fetch(`https://${window.CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(receiptData)
-                });
-            } else {
-                // Fallback to local print if configured
-                const { printHTML, buildReceiptHTML } = await import('./receipt.js');
-                const { printUSB, buildReceiptBytes } = await import('./printer.js');
-                if (typeof printUSB === 'function' && typeof buildReceiptBytes === 'function') {
-                    await printUSB(buildReceiptBytes(receiptData));
-                } else {
-                    throw new Error('No LAN server configured and no local printer connected.');
-                }
-            }
-            if (window.toast) window.toast('Bill printed successfully', 'success');
+            
+            if (!res.ok) throw new Error('LAN server rejected print request');
+            if (window.toast) window.toast('Bill sent to printer', 'success');
           } catch (err) {
             console.error(err);
             if (window.toast) window.toast('Print failed: ' + err.message, 'error');
