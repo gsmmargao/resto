@@ -54,6 +54,7 @@ export async function renderReports(root) {
       ['cashbook', 'Cashbook (Detailed)'],
       ['voided', 'Voided Items'],
       ['bills', 'Bills'],
+      ['kots', 'KOTs'],
       ['profit', 'Profit Book']
     ].map(([key, label]) =>
         el('button', {
@@ -80,6 +81,7 @@ export async function renderReports(root) {
       cashbook: renderCashbookDetailed,
       voided: renderVoidedItems,
       bills: renderBills,
+      kots: renderKOTs,
       profit: renderProfitBook
     };
     const panel = await panels[state.tab]();
@@ -1112,23 +1114,47 @@ async function openBillReprintModal(invoiceId) {
     body.appendChild(previewWrapper);
     card.appendChild(body);
 
-    const footer = el('div', { class: 'px-5 py-4 border-t border-slate-200 bg-white flex items-center gap-2 shrink-0 rounded-b-2xl' }, [
+    const footer = el('div', { class: 'p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-2' }, [
       el('button', {
-        class: 'flex-1 py-2.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-sm',
-        onclick: () => { printHTML(buildReceiptHTML(receiptData)); toast('Opening browser print...', 'info'); }
-      }, 'Browser Print'),
-      el('button', {
-        class: 'flex-1 py-2.5 rounded-lg bg-slate-900 hover:bg-black text-white font-semibold text-sm shadow',
+        class: 'px-6 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-sm transition',
         onclick: async (e) => {
-          if (!isUSBConnected()) { toast('USB Printer not connected. Use Browser Print or connect in POS.', 'warn', 4000); return; }
-          const btn = e.currentTarget; btn.disabled = true; btn.textContent = 'Printing...';
+          const btn = e.currentTarget;
+          const orig = btn.innerHTML;
+          btn.innerHTML = 'Printing...';
+          btn.disabled = true;
+          
           try {
-            await printUSB(buildReceiptBytes(receiptData));
-            toast('Receipt printed!', 'success'); btn.textContent = 'Printed!';
-            setTimeout(() => { btn.disabled = false; btn.textContent = 'Print Thermal'; }, 2000);
-          } catch (err) { toast('Print failed: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Print Thermal'; }
+            const receiptData = buildReceiptData({
+              tenant: store.state.tenant, outlet: store.state.outlet, order: modalOrder,
+              items: modalItems, invoice: modalInvoice, payments: modalPayments,
+              customer: modalCustomer, tableName: modalTableName,
+            });
+
+            if (window.CONFIG && window.CONFIG.LOCAL_SERVER_IP) {
+                await fetch(`https://${window.CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(receiptData)
+                });
+            } else {
+                // Fallback to local print if configured
+                const { printHTML, buildReceiptHTML } = await import('./receipt.js');
+                const { printUSB, buildReceiptBytes } = await import('./printer.js');
+                if (typeof printUSB === 'function' && typeof buildReceiptBytes === 'function') {
+                    await printUSB(buildReceiptBytes(receiptData));
+                } else {
+                    throw new Error('No LAN server configured and no local printer connected.');
+                }
+            }
+            if (window.toast) window.toast('Bill printed successfully', 'success');
+          } catch (err) {
+            console.error(err);
+            if (window.toast) window.toast('Print failed: ' + err.message, 'error');
+          }
+          
+          btn.innerHTML = orig;
+          btn.disabled = false;
         }
-      }, 'Print Thermal')
+      }, '🖨️ Print')
     ]);
     card.appendChild(footer);
     modalOverlay.appendChild(card);
@@ -1360,4 +1386,133 @@ async function renderKOTsTab(root, state) {
   ]);
   wrapper.appendChild(table);
   root.appendChild(wrapper);
+}
+
+
+// ============================================================
+// KOT TAB RENDER LOGIC
+// ============================================================
+async function renderKOTs() {
+  const root = document.getElementById('reports-content') || document.querySelector('.report-content') || document.body;
+  // Fallback to finding the content area if specific ID is missing
+  const container = root.querySelector('.p-4') || root; 
+  
+  container.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading KOTs...</div>';
+  
+  const outletId = store.state.outlet?.id;
+  if (!outletId) return;
+
+  // Fetch KOTs within date range (using global state if available, otherwise last 50)
+  let query = supabase.from('kots')
+    .select('*, orders(table_name_snapshot)')
+    .eq('outlet_id', outletId)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  const { data: kots, error } = await query;
+  if (error) {
+    container.innerHTML = `<div class="text-red-500 p-4">Error loading KOTs: ${error.message}</div>`;
+    return;
+  }
+
+  if (!kots || kots.length === 0) {
+    container.innerHTML = '<div class="text-center py-10 text-slate-500">No KOTs found for this period.</div>';
+    return;
+  }
+
+  // Build Table
+  const table = el('table', { class: 'w-full text-sm text-left text-slate-600' });
+  table.innerHTML = `
+    <thead class="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+      <tr>
+        <th class="px-4 py-3">Time</th>
+        <th class="px-4 py-3">KOT #</th>
+        <th class="px-4 py-3">Table</th>
+        <th class="px-4 py-3">Status</th>
+        <th class="px-4 py-3 text-right">Action</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+
+  const tbody = table.querySelector('tbody');
+
+  kots.forEach(k => {
+    const tr = el('tr', { class: 'border-b border-slate-100 hover:bg-slate-50' });
+    
+    const timeStr = new Date(k.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = new Date(k.created_at).toLocaleDateString('en-GB');
+    
+    const tableNameRaw = k.orders?.table_name_snapshot || 'Take-away';
+    const tableName = tableNameRaw.split(' - ')[0];
+
+    tr.innerHTML = `
+      <td class="px-4 py-3">
+        <div class="font-medium">${dateStr}</div>
+        <div class="text-xs text-slate-400">${timeStr}</div>
+      </td>
+      <td class="px-4 py-3 font-semibold text-slate-800">KOT-${k.kot_number}</td>
+      <td class="px-4 py-3 font-medium">${tableName}</td>
+      <td class="px-4 py-3">
+        <span class="px-2 py-1 rounded text-xs font-semibold bg-${k.status === 'ready' ? 'emerald' : 'amber'}-100 text-${k.status === 'ready' ? 'emerald' : 'amber'}-700">
+          ${k.status.toUpperCase()}
+        </span>
+      </td>
+      <td class="px-4 py-3 text-right">
+        <button class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-xs font-semibold border border-blue-200 transition">
+          🖨️ Print
+        </button>
+      </td>
+    `;
+
+    tr.querySelector('button').onclick = async (e) => {
+      const btn = e.currentTarget;
+      const orig = btn.innerHTML;
+      btn.innerHTML = 'Printing...';
+      btn.disabled = true;
+
+      try {
+        // Fetch KOT items
+        const { data: items } = await supabase.from('kot_items').select('*').eq('kot_id', k.id);
+        
+        const payload = {
+          kot: k.kot_number,
+          items: (items || []).map(it => ({ 
+              quantity: it.quantity, 
+              name: it.name_snapshot, 
+              variant: it.variant_name, 
+              notes: it.notes 
+          })),
+          tableName: tableName,
+          waiterName: 'admin'
+        };
+        
+        await fetch('https://192.168.100.19:3000/api/print-kot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        if (window.toast) window.toast('KOT printed successfully', 'success');
+      } catch (err) {
+        console.error(err);
+        if (window.toast) window.toast('Failed to print KOT', 'error');
+      }
+
+      btn.innerHTML = orig;
+      btn.disabled = false;
+    };
+
+    tbody.appendChild(tr);
+  });
+
+  container.innerHTML = '';
+  const wrapper = el('div', { class: 'bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden mt-4' }, [
+    el('div', { class: 'px-4 py-3 border-b border-slate-200 bg-slate-50 font-semibold text-slate-700 flex justify-between items-center' }, [
+      el('span', {}, 'Recent KOTs'),
+      el('span', { class: 'text-xs font-normal text-slate-500' }, `${kots.length} KOTs`)
+    ])
+  ]);
+  wrapper.appendChild(table);
+  container.appendChild(wrapper);
 }
