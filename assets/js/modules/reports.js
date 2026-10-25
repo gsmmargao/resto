@@ -1658,3 +1658,182 @@ async function renderCashbookNew() {
     container.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm">Error loading cashbook: ${err.message}</div>`;
   }
 }
+
+async function renderCashbook() {
+  const container = document.getElementById('reports-content') || document.querySelector('.report-content') || document.body;
+  container.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Cashbook...</div>';
+  
+  const outletId = store.state.outlet?.id;
+  const tenantId = store.state.tenant?.id;
+  if (!outletId || !tenantId) return;
+
+  // Date filters (fallback to today if missing)
+  let fromDate = new Date().toISOString().split('T')[0];
+  let toDate = new Date().toISOString().split('T')[0];
+  
+  // Try to grab dates from the global UI state if they exist
+  if (window.state && window.state.fromDate) fromDate = window.state.fromDate;
+  if (window.state && window.state.toDate) toDate = window.state.toDate;
+
+  try {
+    // Fetch Sales (Money In)
+    const { data: payments } = await supabase.from('payments')
+      .select('*, invoices(invoice_number)')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('mode', ['cash', 'upi']);
+
+    // Fetch Purchases (Money Out)
+    const { data: purchases } = await supabase.from('purchases')
+      .select('*, suppliers(name)')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('payment_mode', ['cash', 'upi']);
+
+    // Fetch Supplier Payments (Money Out)
+    const { data: supplierPays } = await supabase.from('supplier_payments')
+      .select('*, suppliers(name)')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('payment_mode', ['cash', 'upi']);
+
+    let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
+    const ledgerIn = [];
+    const ledgerOut = [];
+
+    // Process Sales (IN)
+    (payments || []).forEach(p => {
+      const amt = Number(p.amount);
+      if (p.mode === 'cash') cashIn += amt;
+      if (p.mode === 'upi') upiIn += amt;
+      ledgerIn.push({ 
+        time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), 
+        desc: `Invoice #${p.invoices?.invoice_number || 'N/A'}`, 
+        mode: p.mode.toUpperCase(), 
+        amount: amt 
+      });
+    });
+
+    // Process Purchases (OUT)
+    (purchases || []).forEach(p => {
+      const amt = Number(p.total);
+      if (p.payment_mode === 'cash') cashOut += amt;
+      if (p.payment_mode === 'upi') upiOut += amt;
+      ledgerOut.push({ 
+        time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), 
+        desc: `${p.suppliers?.name || 'Supplier'} - ${p.notes || 'Purchase'}`, 
+        mode: p.payment_mode.toUpperCase(), 
+        amount: amt 
+      });
+    });
+
+    // Process Supplier Payments (OUT)
+    (supplierPays || []).forEach(p => {
+      const amt = Number(p.amount);
+      if (p.payment_mode === 'cash') cashOut += amt;
+      if (p.payment_mode === 'upi') upiOut += amt;
+      ledgerOut.push({ 
+        time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), 
+        desc: `Payment to ${p.suppliers?.name || 'Supplier'}`, 
+        mode: p.payment_mode.toUpperCase(), 
+        amount: amt 
+      });
+    });
+
+    const cashBalance = cashIn - cashOut;
+    const upiBalance = upiIn - upiOut;
+
+    // Helper to build table rows
+    const buildRows = (arr, isIn) => {
+      if (!arr.length) return '<tr><td colspan="4" class="text-center py-6 text-slate-400 text-sm">No entries found</td></tr>';
+      return arr.map(l => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+          <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${l.time}</td>
+          <td class="px-4 py-3 text-sm text-slate-700">${l.desc}</td>
+          <td class="px-4 py-3"><span class="px-2 py-1 rounded text-[10px] font-bold ${l.mode === 'CASH' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}">${l.mode}</span></td>
+          <td class="px-4 py-3 text-sm font-semibold text-right ${isIn ? 'text-emerald-600' : 'text-red-600'}">
+            ${isIn ? '+' : '-'}₹${l.amount.toFixed(2)}
+          </td>
+        </tr>
+      `).join('');
+    };
+
+    container.innerHTML = `
+      <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
+        
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-5 flex justify-between items-center shadow-sm">
+            <div>
+              <div class="text-emerald-800 text-xs uppercase tracking-wide font-bold">Net Cash Balance</div>
+              <div class="text-3xl font-bold mt-1 text-emerald-600">₹${cashBalance.toFixed(2)}</div>
+            </div>
+            <div class="text-right text-xs text-emerald-700 space-y-1 font-medium">
+              <div>In: ₹${cashIn.toFixed(2)}</div>
+              <div>Out: ₹${cashOut.toFixed(2)}</div>
+            </div>
+          </div>
+          
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 flex justify-between items-center shadow-sm">
+            <div>
+              <div class="text-blue-800 text-xs uppercase tracking-wide font-bold">Net UPI Balance</div>
+              <div class="text-3xl font-bold mt-1 text-blue-600">₹${upiBalance.toFixed(2)}</div>
+            </div>
+            <div class="text-right text-xs text-blue-700 space-y-1 font-medium">
+              <div>In: ₹${upiIn.toFixed(2)}</div>
+              <div>Out: ₹${upiOut.toFixed(2)}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ledgers -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- Money In (Left) -->
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
+              <h3 class="font-bold text-slate-700 text-sm">Money In (Sales)</h3>
+            </div>
+            <table class="w-full">
+              <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
+                <tr>
+                  <th class="text-left px-4 py-2 font-semibold">Time</th>
+                  <th class="text-left px-4 py-2 font-semibold">Desc</th>
+                  <th class="text-center px-4 py-2 font-semibold">Mode</th>
+                  <th class="text-right px-4 py-2 font-semibold">Amount</th>
+                </tr>
+              </thead>
+              <tbody>${buildRows(ledgerIn, true)}</tbody>
+            </table>
+          </div>
+
+          <!-- Money Out (Right) -->
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
+              <h3 class="font-bold text-slate-700 text-sm">Money Out (Purchases & Payments)</h3>
+            </div>
+            <table class="w-full">
+              <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
+                <tr>
+                  <th class="text-left px-4 py-2 font-semibold">Time</th>
+                  <th class="text-left px-4 py-2 font-semibold">Desc</th>
+                  <th class="text-center px-4 py-2 font-semibold">Mode</th>
+                  <th class="text-right px-4 py-2 font-semibold">Amount</th>
+                </tr>
+              </thead>
+              <tbody>${buildRows(ledgerOut, false)}</tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+    `;
+
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
+  }
+}
