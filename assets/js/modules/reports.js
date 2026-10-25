@@ -1155,93 +1155,110 @@ async function openBillReprintModal(invoiceId) {
   }
 }
 
+
+
+
 async function renderProfitBook() {
-  const outletId = store.state.outlet.id;
-  const from = rangeStart().toISOString();
-  const to = rangeEnd().toISOString();
-
-  const [paymentsRes, purchasesRes, supplierPaysRes, cashMovementsRes, tipPayoutsRes] = await Promise.all([
-    supabase.from('payments').select('amount, tip_amount').eq('outlet_id', outletId).eq('status', 'success').gte('paid_at', from).lte('paid_at', to),
-    supabase.from('purchase_orders').select('grand_total').eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to),
-    supabase.from('supplier_payments').select('amount').eq('tenant_id', store.state.tenant.id).gte('created_at', from).lte('created_at', to),
-    supabase.from('cash_movements').select('amount, movement_type').eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to),
-    supabase.from('tip_payouts').select('amount').eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to)
-  ]);
-
-  const sales = paymentsRes.data || [];
-  const totalSales = sales.reduce((s, p) => s + Number(p.amount), 0);
-  const tipsIn = sales.reduce((s, p) => s + Number(p.tip_amount || 0), 0);
+  const wrapper = el('div', { class: 'w-full' });
+  wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Profit Book...</div>';
   
-  const tipPayouts = tipPayoutsRes.data || [];
-  const tipsOut = tipPayouts.reduce((s, p) => s + Number(p.amount), 0);
-  const tipsProfit = tipsIn - tipsOut;
+  const outletId = store.state.outlet?.id;
+  const tenantId = store.state.tenant?.id;
+  if (!outletId || !tenantId) return wrapper;
 
-  const purchases = purchasesRes.data || [];
-  const cogs = purchases.reduce((s, p) => s + Number(p.grand_total), 0);
-  const grossProfit = totalSales - cogs;
-  const grossMargin = totalSales > 0 ? (grossProfit / totalSales) * 100 : 0;
+  let fromDate = new Date().toISOString().split('T')[0];
+  let toDate = new Date().toISOString().split('T')[0];
+  if (window.state && window.state.fromDate) fromDate = window.state.fromDate;
+  if (window.state && window.state.toDate) toDate = window.state.toDate;
 
-  const supplierPays = supplierPaysRes.data || [];
-  const cashMovements = cashMovementsRes.data || [];
-  
-  const totalSupplierPays = supplierPays.reduce((s, p) => s + Number(p.amount), 0);
-  const otherExpenses = cashMovements.filter(m => m.movement_type !== 'tip_payout' && m.movement_type !== 'cash_in').reduce((s, m) => s + Number(m.amount), 0);
-  const totalExpenses = totalSupplierPays + otherExpenses;
+  try {
+    const { data: invoices } = await supabase.from('invoices').select('grand_total').eq('outlet_id', outletId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59');
+    const { data: periodPurchases } = await supabase.from('purchases').select('total').eq('tenant_id', tenantId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59');
+    const { data: suppliers } = await supabase.from('suppliers').select('id, name').eq('tenant_id', tenantId);
+    const { data: allPurchases } = await supabase.from('purchases').select('supplier_id, total, payment_mode').eq('tenant_id', tenantId);
+    const { data: allPayments } = await supabase.from('supplier_payments').select('supplier_id, amount').eq('tenant_id', tenantId);
 
-  const netProfit = grossProfit - totalExpenses + tipsProfit;
-  const netMargin = totalSales > 0 ? (netProfit / totalSales) * 100 : 0;
+    const totalRevenue = (invoices || []).reduce((sum, inv) => sum + Number(inv.grand_total || 0), 0);
+    const totalPurchases = (periodPurchases || []).reduce((sum, p) => sum + Number(p.total || 0), 0);
+    const grossProfit = totalRevenue - totalPurchases;
 
-  const wrap = el('div', { class: 'max-w-4xl mx-auto space-y-6' });
+    const supplierMap = new Map();
+    (suppliers || []).forEach(s => supplierMap.set(s.id, { name: s.name, credit: 0, paid: 0 }));
 
-  const row = (label, value, isTotal = false, isNegative = false) => {
-    return el('div', { class: `flex justify-between py-2.5 ${isTotal ? 'border-t-2 border-slate-200 mt-2 font-bold text-slate-800 text-base' : 'border-b border-slate-100 text-sm'}` }, [
-      el('span', { class: isTotal ? '' : 'text-slate-600' }, label),
-      el('span', { class: isNegative ? 'text-red-600' : isTotal ? 'text-indigo-700' : 'text-slate-800 font-medium' }, 
-        (isNegative ? '- ' : '') + fmtMoney(Math.abs(value)))
-    ]);
-  };
+    (allPurchases || []).forEach(p => {
+      if (p.payment_mode === 'credit' && supplierMap.has(p.supplier_id)) supplierMap.get(p.supplier_id).credit += Number(p.total);
+    });
+    (allPayments || []).forEach(p => {
+      if (supplierMap.has(p.supplier_id)) supplierMap.get(p.supplier_id).paid += Number(p.amount);
+    });
 
-  const revCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-6 shadow-sm' }, [
-    el('h3', { class: 'text-lg font-bold text-emerald-600 mb-3' }, 'Revenue'),
-    row('Bill Payment', totalSales)
-  ]);
-  wrap.appendChild(revCard);
+    let totalOutstanding = 0;
+    const outstandingList = [];
+    supplierMap.forEach((val, id) => {
+      const balance = val.credit - val.paid;
+      if (balance > 0) {
+        totalOutstanding += balance;
+        outstandingList.push({ name: val.name, credit: val.credit, paid: val.paid, balance });
+      }
+    });
+    outstandingList.sort((a, b) => b.balance - a.balance);
 
-  const tipsCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-6 shadow-sm' }, [
-    el('h3', { class: 'text-lg font-bold text-indigo-600 mb-3' }, 'Tips'),
-    row('Tips Collected', tipsIn),
-    row('Tips Paid Out', tipsOut, false, true),
-    row('Tips Profit (In - Out)', tipsProfit, true, tipsProfit < 0)
-  ]);
-  wrap.appendChild(tipsCard);
+    const buildOutRows = () => {
+      if (!outstandingList.length) return '<tr><td colspan="4" class="text-center py-8 text-slate-400 text-sm font-medium">No outstanding balances. All clear!</td></tr>';
+      return outstandingList.map(s => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+          <td class="px-5 py-4 text-sm font-semibold text-slate-800">${s.name}</td>
+          <td class="px-5 py-4 text-sm text-right text-slate-600">₹${s.credit.toFixed(2)}</td>
+          <td class="px-5 py-4 text-sm text-right text-emerald-600">₹${s.paid.toFixed(2)}</td>
+          <td class="px-5 py-4 text-sm text-right font-bold text-red-600">₹${s.balance.toFixed(2)}</td>
+        </tr>
+      `).join('');
+    };
 
-  const cogsCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-6 shadow-sm' }, [
-    el('h3', { class: 'text-lg font-bold text-orange-600 mb-3' }, 'Cost of Sales (COGS)'),
-    row('Supplier Purchases (bills)', cogs),
-    row('Gross Profit (Sales - COGS)', grossProfit, true, grossProfit < 0),
-    el('div', { class: 'flex justify-between pt-1 pb-2 text-sm text-slate-500' }, [
-      el('span', {}, 'Gross Margin'),
-      el('span', { class: 'font-medium text-slate-700' }, grossMargin.toFixed(1) + '%')
-    ])
-  ]);
-  wrap.appendChild(cogsCard);
-
-  const expCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-6 shadow-sm' }, [
-    el('h3', { class: 'text-lg font-bold text-red-600 mb-3' }, 'Operating Expenses'),
-    row('Supplier Payments', totalSupplierPays),
-    row('Other Expenses (Cash Out)', otherExpenses),
-    el('div', { class: 'flex justify-between py-2.5 border-t-2 border-slate-200 mt-2 font-bold text-slate-800 text-base' }, [
-      el('span', {}, 'Net Profit (Gross - Expenses + Tips)'),
-      el('span', { class: netProfit < 0 ? 'text-red-600' : 'text-emerald-600' }, fmtMoney(netProfit))
-    ]),
-    el('div', { class: 'flex justify-between pt-1 pb-2 text-sm text-slate-500' }, [
-      el('span', {}, 'Net Margin'),
-      el('span', { class: 'font-medium text-slate-700' }, netMargin.toFixed(1) + '%')
-    ])
-  ]);
-  wrap.appendChild(expCard);
-
-  return wrap;
+    wrapper.innerHTML = `
+      <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Revenue</div>
+            <div class="text-3xl font-bold text-slate-800 mt-1">₹${totalRevenue.toFixed(2)}</div>
+            <div class="text-xs text-slate-400 mt-2">From invoices in selected period</div>
+          </div>
+          <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Purchases</div>
+            <div class="text-3xl font-bold text-slate-800 mt-1">₹${totalPurchases.toFixed(2)}</div>
+            <div class="text-xs text-slate-400 mt-2">From purchases in selected period</div>
+          </div>
+          <div class="bg-slate-900 rounded-xl p-5 shadow-sm">
+            <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Gross Profit</div>
+            <div class="text-3xl font-bold ${grossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'} mt-1">₹${grossProfit.toFixed(2)}</div>
+            <div class="text-xs text-slate-500 mt-2">Revenue - Purchases</div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-8">
+          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+            <div>
+              <h3 class="font-bold text-slate-800 text-sm">Outstanding Supplier Payables</h3>
+              <p class="text-xs text-slate-500">Cumulative credit purchases minus payments made</p>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Owed</div>
+              <div class="text-xl font-bold text-red-600">₹${totalOutstanding.toFixed(2)}</div>
+            </div>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest">
+              <tr><th class="text-left px-5 py-3 font-semibold">Supplier Name</th><th class="text-right px-5 py-3 font-semibold">Total Credit Purchases</th><th class="text-right px-5 py-3 font-semibold">Total Paid</th><th class="text-right px-5 py-3 font-semibold">Balance Due</th></tr>
+            </thead>
+            <tbody>${buildOutRows()}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error(err);
+    wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading Profit Book: ${err.message}</div>`;
+  }
+  return wrapper;
 }
 
 
@@ -1659,94 +1676,53 @@ async function renderCashbookNew() {
   }
 }
 
+
 async function renderCashbook() {
-  const container = document.getElementById('reports-content') || document.querySelector('.report-content') || document.body;
-  container.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Cashbook...</div>';
+  const wrapper = el('div', { class: 'w-full' });
+  wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Cashbook...</div>';
   
   const outletId = store.state.outlet?.id;
   const tenantId = store.state.tenant?.id;
-  if (!outletId || !tenantId) return;
+  if (!outletId || !tenantId) return wrapper;
 
-  // Date filters (fallback to today if missing)
   let fromDate = new Date().toISOString().split('T')[0];
   let toDate = new Date().toISOString().split('T')[0];
-  
-  // Try to grab dates from the global UI state if they exist
   if (window.state && window.state.fromDate) fromDate = window.state.fromDate;
   if (window.state && window.state.toDate) toDate = window.state.toDate;
 
   try {
-    // Fetch Sales (Money In)
-    const { data: payments } = await supabase.from('payments')
-      .select('*, invoices(invoice_number)')
-      .eq('outlet_id', outletId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59')
-      .in('mode', ['cash', 'upi']);
-
-    // Fetch Purchases (Money Out)
-    const { data: purchases } = await supabase.from('purchases')
-      .select('*, suppliers(name)')
-      .eq('tenant_id', tenantId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59')
-      .in('payment_mode', ['cash', 'upi']);
-
-    // Fetch Supplier Payments (Money Out)
-    const { data: supplierPays } = await supabase.from('supplier_payments')
-      .select('*, suppliers(name)')
-      .eq('tenant_id', tenantId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59')
-      .in('payment_mode', ['cash', 'upi']);
+    const { data: payments } = await supabase.from('payments').select('*, invoices(invoice_number)').eq('outlet_id', outletId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59').in('mode', ['cash', 'upi']);
+    const { data: purchases } = await supabase.from('purchases').select('*, suppliers(name)').eq('tenant_id', tenantId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59').in('payment_mode', ['cash', 'upi']);
+    const { data: supplierPays } = await supabase.from('supplier_payments').select('*, suppliers(name)').eq('tenant_id', tenantId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59').in('payment_mode', ['cash', 'upi']);
 
     let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
     const ledgerIn = [];
     const ledgerOut = [];
 
-    // Process Sales (IN)
     (payments || []).forEach(p => {
       const amt = Number(p.amount);
       if (p.mode === 'cash') cashIn += amt;
       if (p.mode === 'upi') upiIn += amt;
-      ledgerIn.push({ 
-        time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), 
-        desc: `Invoice #${p.invoices?.invoice_number || 'N/A'}`, 
-        mode: p.mode.toUpperCase(), 
-        amount: amt 
-      });
+      ledgerIn.push({ time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), desc: `Invoice #${p.invoices?.invoice_number || 'N/A'}`, mode: p.mode.toUpperCase(), amount: amt });
     });
 
-    // Process Purchases (OUT)
     (purchases || []).forEach(p => {
       const amt = Number(p.total);
       if (p.payment_mode === 'cash') cashOut += amt;
       if (p.payment_mode === 'upi') upiOut += amt;
-      ledgerOut.push({ 
-        time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), 
-        desc: `${p.suppliers?.name || 'Supplier'} - ${p.notes || 'Purchase'}`, 
-        mode: p.payment_mode.toUpperCase(), 
-        amount: amt 
-      });
+      ledgerOut.push({ time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), desc: `${p.suppliers?.name || 'Supplier'} - ${p.notes || 'Purchase'}`, mode: p.payment_mode.toUpperCase(), amount: amt });
     });
 
-    // Process Supplier Payments (OUT)
     (supplierPays || []).forEach(p => {
       const amt = Number(p.amount);
       if (p.payment_mode === 'cash') cashOut += amt;
       if (p.payment_mode === 'upi') upiOut += amt;
-      ledgerOut.push({ 
-        time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), 
-        desc: `Payment to ${p.suppliers?.name || 'Supplier'}`, 
-        mode: p.payment_mode.toUpperCase(), 
-        amount: amt 
-      });
+      ledgerOut.push({ time: new Date(p.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), desc: `Payment to ${p.suppliers?.name || 'Supplier'}`, mode: p.payment_mode.toUpperCase(), amount: amt });
     });
 
     const cashBalance = cashIn - cashOut;
     const upiBalance = upiIn - upiOut;
 
-    // Helper to build table rows
     const buildRows = (arr, isIn) => {
       if (!arr.length) return '<tr><td colspan="4" class="text-center py-6 text-slate-400 text-sm">No entries found</td></tr>';
       return arr.map(l => `
@@ -1754,17 +1730,13 @@ async function renderCashbook() {
           <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${l.time}</td>
           <td class="px-4 py-3 text-sm text-slate-700">${l.desc}</td>
           <td class="px-4 py-3"><span class="px-2 py-1 rounded text-[10px] font-bold ${l.mode === 'CASH' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}">${l.mode}</span></td>
-          <td class="px-4 py-3 text-sm font-semibold text-right ${isIn ? 'text-emerald-600' : 'text-red-600'}">
-            ${isIn ? '+' : '-'}₹${l.amount.toFixed(2)}
-          </td>
+          <td class="px-4 py-3 text-sm font-semibold text-right ${isIn ? 'text-emerald-600' : 'text-red-600'}">${isIn ? '+' : '-'}₹${l.amount.toFixed(2)}</td>
         </tr>
       `).join('');
     };
 
-    container.innerHTML = `
+    wrapper.innerHTML = `
       <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
-        
-        <!-- Summary Cards -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-5 flex justify-between items-center shadow-sm">
             <div>
@@ -1776,7 +1748,6 @@ async function renderCashbook() {
               <div>Out: ₹${cashOut.toFixed(2)}</div>
             </div>
           </div>
-          
           <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 flex justify-between items-center shadow-sm">
             <div>
               <div class="text-blue-800 text-xs uppercase tracking-wide font-bold">Net UPI Balance</div>
@@ -1788,52 +1759,31 @@ async function renderCashbook() {
             </div>
           </div>
         </div>
-
-        <!-- Ledgers -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          
-          <!-- Money In (Left) -->
           <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
-              <h3 class="font-bold text-slate-700 text-sm">Money In (Sales)</h3>
-            </div>
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money In (Sales)</h3></div>
             <table class="w-full">
               <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
-                <tr>
-                  <th class="text-left px-4 py-2 font-semibold">Time</th>
-                  <th class="text-left px-4 py-2 font-semibold">Desc</th>
-                  <th class="text-center px-4 py-2 font-semibold">Mode</th>
-                  <th class="text-right px-4 py-2 font-semibold">Amount</th>
-                </tr>
+                <tr><th class="text-left px-4 py-2 font-semibold">Time</th><th class="text-left px-4 py-2 font-semibold">Desc</th><th class="text-center px-4 py-2 font-semibold">Mode</th><th class="text-right px-4 py-2 font-semibold">Amount</th></tr>
               </thead>
               <tbody>${buildRows(ledgerIn, true)}</tbody>
             </table>
           </div>
-
-          <!-- Money Out (Right) -->
           <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
-              <h3 class="font-bold text-slate-700 text-sm">Money Out (Purchases & Payments)</h3>
-            </div>
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money Out (Purchases & Payments)</h3></div>
             <table class="w-full">
               <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
-                <tr>
-                  <th class="text-left px-4 py-2 font-semibold">Time</th>
-                  <th class="text-left px-4 py-2 font-semibold">Desc</th>
-                  <th class="text-center px-4 py-2 font-semibold">Mode</th>
-                  <th class="text-right px-4 py-2 font-semibold">Amount</th>
-                </tr>
+                <tr><th class="text-left px-4 py-2 font-semibold">Time</th><th class="text-left px-4 py-2 font-semibold">Desc</th><th class="text-center px-4 py-2 font-semibold">Mode</th><th class="text-right px-4 py-2 font-semibold">Amount</th></tr>
               </thead>
               <tbody>${buildRows(ledgerOut, false)}</tbody>
             </table>
           </div>
-
         </div>
       </div>
     `;
-
   } catch (err) {
     console.error(err);
-    container.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
+    wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
   }
+  return wrapper;
 }
