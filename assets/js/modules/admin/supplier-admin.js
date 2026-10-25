@@ -136,7 +136,7 @@ function buildSupplierCard(s, root) {
 
   const card = el('div', {
     class: `bg-white rounded-xl border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-200' : s.is_active ? 'border-slate-200' : 'border-dashed border-red-300 opacity-70'} overflow-hidden hover:shadow-md transition cursor-pointer`,
-    onclick: () => { state.selectedId = isSelected ? null : s.id; paint(root); },
+    onclick: () => openLedgerModal(root, s),
   });
 
   card.appendChild(el('div', { class: 'p-4' }, [
@@ -457,7 +457,10 @@ function openLedgerModal(root, supplier) {
   card.appendChild(el('div', { class: 'px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0' }, [
     el('div', {}, [
       el('h3', { class: 'font-bold text-lg text-slate-800' }, supplier.name),
-      el('p', { class: 'text-sm text-slate-500 mt-1' }, 'Total Outstanding: ', el('span', { class: `font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}` }, fmtMoney(balance)))
+      el('p', { class: 'text-sm text-slate-500 mt-1' }, [
+        'Total Outstanding: ',
+        el('span', { class: `font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}` }, fmtMoney(balance))
+      ])
     ]),
     el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
   ]));
