@@ -130,7 +130,7 @@ function buildSupplierCard(s, root) {
   const isSelected = state.selectedId === s.id;
   
   // Calculate Balance
-  const totalPurchases = state.purchases.filter(p => p.supplier_id === s.id).reduce((sum, p) => sum + Number(p.grand_total), 0);
+  const totalPurchases = state.purchases.filter(p => p.supplier_id === s.id).reduce((sum, p) => sum + Number(p.total), 0);
   const totalPayments = state.payments.filter(p => p.supplier_id === s.id).reduce((sum, p) => sum + Number(p.amount), 0);
   const balance = totalPurchases - totalPayments;
 
@@ -176,13 +176,13 @@ function renderLedgerFor(supplierId, root) {
   const purchases = state.purchases.filter(p => p.supplier_id === supplierId);
   const payments = state.payments.filter(p => p.supplier_id === supplierId);
 
-  const totalPurchases = purchases.reduce((sum, p) => sum + Number(p.grand_total), 0);
+  const totalPurchases = purchases.reduce((sum, p) => sum + Number(p.total), 0);
   const totalPayments = payments.reduce((sum, p) => sum + Number(p.amount), 0);
   const balance = totalPurchases - totalPayments;
 
   // Combine into a single ledger
   const ledger = [];
-  purchases.forEach(p => ledger.push({ date: p.created_at, type: 'purchase', desc: `Bill ${p.po_number}`, amount: p.grand_total }));
+  purchases.forEach(p => ledger.push({ date: p.created_at, type: 'purchase', desc: p.notes || 'Purchase Recorded', amount: p.total }));
   payments.forEach(p => ledger.push({ date: p.created_at, type: 'payment', desc: `Payment (${p.payment_mode})`, amount: p.amount, mode: p.payment_mode, notes: p.notes }));
   
   ledger.sort((a, b) => new Date(b.date) - new Date(a.date));
