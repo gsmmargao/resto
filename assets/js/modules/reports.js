@@ -534,95 +534,145 @@ async function renderCashVariance() {
   return wrap;
 }
 
+
 async function renderUPI() {
-  const outletId = store.state.outlet.id;
-  const from = rangeStart().toISOString();
-  const to = rangeEnd().toISOString();
-
-  const [salesRes, purchasesRes, supplierPaysRes, tipPayoutsRes] = await Promise.all([
-    supabase.from('payments').select('amount, tip_amount, mode, paid_at').eq('outlet_id', outletId).in('mode', ['upi', 'card']).eq('status', 'success').gte('paid_at', from).lte('paid_at', to),
-    supabase.from('purchase_orders').select('grand_total, payment_mode, payment_status, created_at').eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to),
-    supabase.from('supplier_payments').select('amount, payment_mode, notes, created_at').eq('tenant_id', store.state.tenant.id).in('payment_mode', ['upi', 'card', 'bank']).gte('created_at', from).lte('created_at', to),
-    supabase.from('tip_payouts').select('amount, payment_mode, staff_name, created_at').eq('outlet_id', outletId).in('payment_mode', ['upi', 'card', 'bank']).gte('created_at', from).lte('created_at', to)
-  ]);
-
-  const sales = salesRes.data || [];
-  const allPurchases = purchasesRes.data || [];
-  const supplierPays = supplierPaysRes.data || [];
-  const tipPayouts = tipPayoutsRes.data || [];
-
-  const paidDigitalPurchases = allPurchases.filter(p => p.payment_status === 'paid' && ['upi', 'card', 'bank'].includes(p.payment_mode?.toLowerCase()));
+  const wrapper = el('div', { class: 'w-full' });
+  wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading UPI Book...</div>';
   
-  let upiIn = 0, cardIn = 0, digitalTips = 0;
-  sales.forEach(s => {
-    if (s.mode === 'upi') upiIn += Number(s.amount);
-    if (s.mode === 'card') cardIn += Number(s.amount);
-    digitalTips += Number(s.tip_amount || 0);
-  });
+  const outletId = store.state.outlet?.id;
+  const tenantId = store.state.tenant?.id;
+  if (!outletId || !tenantId) return wrapper;
 
-  let totalTipPayouts = tipPayouts.reduce((s, p) => s + Number(p.amount), 0);
-  let totalOut = paidDigitalPurchases.reduce((s, p) => s + Number(p.grand_total), 0) + supplierPays.reduce((s, p) => s + Number(p.amount), 0) + totalTipPayouts;
-  
-  const totalIn = upiIn + cardIn + digitalTips;
-  const netBalance = totalIn - totalOut;
+  // Date filters
+  let fromDate = new Date().toISOString().split('T')[0];
+  let toDate = new Date().toISOString().split('T')[0];
+  if (window.state && window.state.fromDate) fromDate = window.state.fromDate;
+  if (window.state && window.state.toDate) toDate = window.state.toDate;
 
-  const wrap = el('div', {});
+  try {
+    // 1. Fetch Digital Sales (UPI/Card)
+    const { data: sales } = await supabase.from('payments')
+      .select('amount, tip_amount, mode, created_at')
+      .eq('outlet_id', outletId)
+      .in('mode', ['upi', 'card', 'bank'])
+      .eq('status', 'success')
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
 
-  const summary = el('div', { class: 'grid grid-cols-2 md:grid-cols-5 gap-3 mb-4' });
-  summary.appendChild(kpi('Digital Sales (In)', fmtMoney(totalIn), 'from-emerald-500 to-emerald-600', `UPI: ${fmtMoney(upiIn)} | Card: ${fmtMoney(cardIn)}`));
-  summary.appendChild(kpi('Digital Purchases (Out)', fmtMoney(paidDigitalPurchases.reduce((s, p) => s + Number(p.grand_total), 0) + supplierPays.reduce((s, p) => s + Number(p.amount), 0)), 'from-red-500 to-red-600', 'POs & Suppliers'));
-  summary.appendChild(kpi('Tips Paid Out', fmtMoney(totalTipPayouts), 'from-pink-500 to-rose-500', 'To staff (Digital)'));
-  summary.appendChild(kpi('Digital Tips In', fmtMoney(digitalTips), 'from-purple-500 to-purple-600', 'Collected via UPI/Card'));
-  summary.appendChild(kpi('Final UPI Balance', fmtMoney(netBalance), 'from-indigo-600 to-indigo-800', 'Available balance'));
-  wrap.appendChild(summary);
+    // 2. Fetch Quick Purchases (the new table)
+    const { data: quickPurchases } = await supabase.from('purchases')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .in('payment_mode', ['upi', 'card', 'bank'])
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
 
-  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
-  card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
-    el('h3', { class: 'font-semibold text-slate-800 text-sm' }, 'UPI & Card Ledger'),
-  ]));
+    // 3. Fetch Supplier Payments (UPI/Card)
+    const { data: supplierPays } = await supabase.from('supplier_payments')
+      .select('*, suppliers(name)')
+      .eq('tenant_id', tenantId)
+      .in('payment_mode', ['upi', 'card', 'bank'])
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
 
-  const ledger = [];
-  sales.forEach(s => ledger.push({ type: 'in', mode: s.mode, amount: Number(s.amount) + Number(s.tip_amount || 0), date: s.paid_at, desc: 'Customer Payment' }));
-  allPurchases.forEach(p => {
-    if (['upi', 'card', 'bank'].includes(p.payment_mode?.toLowerCase())) ledger.push({ type: 'out', mode: p.payment_mode, amount: p.grand_total, date: p.created_at, desc: `Supplier Purchase (${p.payment_status})` });
-  });
-  supplierPays.forEach(p => ledger.push({ type: 'out', mode: p.payment_mode, amount: p.amount, date: p.created_at, desc: `Supplier Payment (${p.notes || 'No notes'})` }));
-  tipPayouts.forEach(p => ledger.push({ type: 'out', mode: p.payment_mode, amount: p.amount, date: p.created_at, desc: `Tip Payout (${p.staff_name || 'Staff'})` }));
-  ledger.sort((a, b) => new Date(b.date) - new Date(a.date));
+    // 4. Fetch Tip Payouts (UPI/Card)
+    const { data: tipPayouts } = await supabase.from('tip_payouts')
+      .select('*')
+      .eq('outlet_id', outletId)
+      .in('payment_mode', ['upi', 'card', 'bank'])
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
 
-  if (!ledger.length) {
-    card.appendChild(el('div', { class: 'p-8 text-center text-slate-400 text-sm' }, 'No digital transactions in this range'));
-    wrap.appendChild(card);
-    return wrap;
+    // --- CALCULATIONS ---
+    let upiIn = 0, cardIn = 0, digitalTips = 0;
+    (sales || []).forEach(s => {
+      if (s.mode === 'upi') upiIn += Number(s.amount);
+      if (s.mode === 'card' || s.mode === 'bank') cardIn += Number(s.amount);
+      digitalTips += Number(s.tip_amount || 0);
+    });
+
+    let totalPurchasesOut = (quickPurchases || []).reduce((sum, p) => sum + Number(p.total), 0);
+    let totalSupplierPaysOut = (supplierPays || []).reduce((sum, p) => sum + Number(p.amount), 0);
+    let totalTipPayoutsOut = (tipPayouts || []).reduce((sum, p) => sum + Number(p.amount), 0);
+
+    const totalIn = upiIn + cardIn + digitalTips;
+    const totalOut = totalPurchasesOut + totalSupplierPaysOut + totalTipPayoutsOut;
+    const netBalance = totalIn - totalOut;
+
+    // --- UI GENERATION ---
+    const buildRows = (arr, isIn) => {
+      if (!arr.length) return '<tr><td colspan="3" class="text-center py-6 text-slate-400 text-sm">No entries found</td></tr>';
+      return arr.map(l => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+          <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(l.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+          <td class="px-4 py-3 text-sm text-slate-700">${l.desc}</td>
+          <td class="px-4 py-3 text-sm font-semibold text-right ${isIn ? 'text-emerald-600' : 'text-red-600'}">
+            ${isIn ? '+' : '-'}₹${l.amount.toFixed(2)}
+          </td>
+        </tr>
+      `).join('');
+    };
+
+    const ledgerIn = [];
+    const ledgerOut = [];
+
+    (sales || []).forEach(s => ledgerIn.push({ date: s.created_at, desc: `Sales (${s.mode.toUpperCase()})`, amount: Number(s.amount) }));
+    (quickPurchases || []).forEach(p => ledgerOut.push({ date: p.created_at, desc: `Purchase - ${p.notes || 'Bill'}`, amount: Number(p.total) }));
+    (supplierPays || []).forEach(p => ledgerOut.push({ date: p.created_at, desc: `Supplier Payment - ${p.suppliers?.name || 'Supplier'}`, amount: Number(p.amount) }));
+    (tipPayouts || []).forEach(p => ledgerOut.push({ date: p.created_at, desc: `Tip Payout`, amount: Number(p.amount) }));
+
+    // Sort
+    ledgerIn.sort((a,b) => new Date(b.date) - new Date(a.date));
+    ledgerOut.sort((a,b) => new Date(b.date) - new Date(a.date));
+
+    wrapper.innerHTML = `
+      <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 shadow-sm">
+            <div class="text-indigo-800 text-xs uppercase tracking-widest font-bold">Net UPI Balance</div>
+            <div class="text-3xl font-bold text-indigo-600 mt-1">₹${netBalance.toFixed(2)}</div>
+          </div>
+          <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-5 shadow-sm">
+            <div class="text-emerald-800 text-xs uppercase tracking-widest font-bold">Total In</div>
+            <div class="text-2xl font-bold text-emerald-600 mt-1">₹${totalIn.toFixed(2)}</div>
+          </div>
+          <div class="bg-red-50 border border-red-200 rounded-xl p-5 shadow-sm">
+            <div class="text-red-800 text-xs uppercase tracking-widest font-bold">Total Out</div>
+            <div class="text-2xl font-bold text-red-600 mt-1">₹${totalOut.toFixed(2)}</div>
+          </div>
+          <div class="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div class="text-slate-600 text-xs uppercase tracking-widest font-bold">Tips Collected</div>
+            <div class="text-2xl font-bold text-slate-800 mt-1">₹${digitalTips.toFixed(2)}</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money In (Sales)</h3></div>
+            <table class="w-full">
+              <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
+                <tr><th class="text-left px-4 py-2">Time</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr>
+              </thead>
+              <tbody>${buildRows(ledgerIn, true)}</tbody>
+            </table>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money Out (Payments)</h3></div>
+            <table class="w-full">
+              <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
+                <tr><th class="text-left px-4 py-2">Time</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr>
+              </thead>
+              <tbody>${buildRows(ledgerOut, false)}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error(err);
+    wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading UPI Book: ${err.message}</div>`;
   }
-
-  const tbody = el('tbody');
-  ledger.forEach(l => {
-    const isIn = l.type === 'in';
-    tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
-      el('td', { class: 'px-5 py-2 text-xs text-slate-500 whitespace-nowrap' }, new Date(l.date).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })),
-      el('td', { class: 'px-5 py-2 text-sm font-medium text-slate-700' }, l.desc),
-      el('td', { class: 'px-5 py-2 text-center' }, [
-        el('span', { class: `text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${l.mode === 'upi' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'}` }, l.mode)
-      ]),
-      el('td', { class: `px-5 py-2 text-sm text-right font-semibold ${isIn ? 'text-emerald-600' : 'text-red-600'}` }, (isIn ? '+' : '-') + fmtMoney(l.amount)),
-    ]));
-  });
-
-  card.appendChild(el('table', { class: 'w-full' }, [
-    el('thead', { class: 'bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide' }, [
-      el('tr', {}, [
-        el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Date'),
-        el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Description'),
-        el('th', { class: 'text-center px-5 py-2 font-semibold' }, 'Mode'),
-        el('th', { class: 'text-right px-5 py-2 font-semibold' }, 'Amount'),
-      ]),
-    ]),
-    tbody,
-  ]));
-  
-  wrap.appendChild(card);
-  return wrap;
+  return wrapper;
 }
 
 async function renderCashbookDetailed() {

@@ -441,11 +441,12 @@ function openPurchaseModal(root, supplierId) {
 }
 
 
+
 function openLedgerModal(root, supplier) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden' });
+  const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden' });
 
-  // Calculate balance from global state
+  // Calculate balance
   const purchases = (state.purchases || []).filter(p => p.supplier_id === supplier.id);
   const payments = (state.payments || []).filter(p => p.supplier_id === supplier.id);
 
@@ -453,70 +454,90 @@ function openLedgerModal(root, supplier) {
   const totalPayments = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const balance = totalPurchases - totalPayments;
 
-  // Header
-  card.appendChild(el('div', { class: 'px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0' }, [
-    el('div', {}, [
-      el('h3', { class: 'font-bold text-lg text-slate-800' }, supplier.name),
-      el('p', { class: 'text-sm text-slate-500 mt-1' }, [
-        'Total Outstanding: ',
-        el('span', { class: `font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}` }, fmtMoney(balance))
-      ])
-    ]),
-    el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
-  ]));
+  // Header (Simple, no borders)
+  const header = el('div', { class: 'px-6 py-5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white' });
+  header.innerHTML = `
+    <div>
+      <h3 class="font-bold text-xl text-slate-800">${supplier.name}</h3>
+      <div class="text-sm text-slate-500 mt-1">
+        Total Outstanding: <span class="font-bold text-red-600 text-lg ml-1">₹${balance.toLocaleString('en-IN', {minimumFractionDigits: 2})}</span>
+      </div>
+    </div>
+    <button class="text-slate-400 hover:text-slate-700 text-3xl leading-none focus:outline-none">&times;</button>
+  `;
+  header.querySelector('button').onclick = () => overlay.remove();
+  card.appendChild(header);
 
-  // Body (Two columns)
-  const body = el('div', { class: 'flex-1 overflow-y-auto p-6 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6' });
-
-  // Left: Credit (Bills)
-  const leftCol = el('div', { class: 'bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col' });
-  leftCol.appendChild(el('div', { class: 'px-4 py-3 bg-red-50 text-red-800 font-bold text-sm border-b border-red-100' }, 'Credit Purchases (Bills)'));
-  const leftTable = el('table', { class: 'w-full text-sm flex-1' });
-  leftTable.innerHTML = `<thead class="bg-white sticky top-0"><tr class="text-xs text-slate-500 border-b border-slate-100"><th class="text-left px-4 py-2">Date</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr></thead><tbody></tbody>`;
-  const leftTbody = leftTable.querySelector('tbody');
+  // Body (Single unified table view)
+  const body = el('div', { class: 'flex-1 overflow-y-auto p-6 bg-white' });
   
-  purchases.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).forEach(p => {
-    leftTbody.appendChild(el('tr', { class: 'border-b border-slate-50 hover:bg-slate-50' }, [
-      el('td', { class: 'px-4 py-3 text-xs text-slate-500 whitespace-nowrap' }, new Date(p.created_at).toLocaleDateString('en-GB')),
-      el('td', { class: 'px-4 py-3 text-slate-700' }, p.notes || 'Purchase Bill'),
-      el('td', { class: 'px-4 py-3 text-right font-semibold text-red-600' }, `+${fmtMoney(p.total || p.grand_total || 0)}`)
-    ]));
-  });
-  if(!purchases.length) leftTbody.innerHTML = '<tr><td colspan="3" class="text-center py-6 text-slate-400 text-xs">No credit purchases recorded</td></tr>';
-  leftCol.appendChild(leftTable);
+  // Build the unified two-column layout
+  const grid = el('div', { class: 'grid grid-cols-1 md:grid-cols-2 gap-0 border border-slate-200 rounded-lg overflow-hidden' });
 
-  // Right: Cash Paid
-  const rightCol = el('div', { class: 'bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col' });
-  rightCol.appendChild(el('div', { class: 'px-4 py-3 bg-emerald-50 text-emerald-800 font-bold text-sm border-b border-emerald-100' }, 'Payments Made (Cash/UPI)'));
-  const rightTable = el('table', { class: 'w-full text-sm flex-1' });
-  rightTable.innerHTML = `<thead class="bg-white sticky top-0"><tr class="text-xs text-slate-500 border-b border-slate-100"><th class="text-left px-4 py-2">Date</th><th class="text-left px-4 py-2">Mode</th><th class="text-right px-4 py-2">Amount</th></tr></thead><tbody></tbody>`;
-  const rightTbody = rightTable.querySelector('tbody');
-  
-  payments.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).forEach(p => {
-    rightTbody.appendChild(el('tr', { class: 'border-b border-slate-50 hover:bg-slate-50' }, [
-      el('td', { class: 'px-4 py-3 text-xs text-slate-500 whitespace-nowrap' }, new Date(p.created_at).toLocaleDateString('en-GB')),
-      el('td', { class: 'px-4 py-3 font-medium uppercase text-slate-600' }, p.payment_mode),
-      el('td', { class: 'px-4 py-3 text-right font-semibold text-emerald-600' }, `-${fmtMoney(p.amount || 0)}`)
-    ]));
-  });
-  if(!payments.length) rightTbody.innerHTML = '<tr><td colspan="3" class="text-center py-6 text-slate-400 text-xs">No payments made yet</td></tr>';
-  rightCol.appendChild(rightTable);
+  // Left Side: Credit (Bills)
+  const leftCol = el('div', { class: 'border-b md:border-b-0 md:border-r border-slate-200' });
+  leftCol.innerHTML = `
+    <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 text-sm">Credit Purchases (Bills)</div>
+    <table class="w-full">
+      <thead>
+        <tr class="text-xs text-slate-400 uppercase border-b border-slate-100">
+          <th class="text-left px-4 py-2 font-medium">Date</th>
+          <th class="text-left px-4 py-2 font-medium">Description</th>
+          <th class="text-right px-4 py-2 font-medium">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${purchases.length ? purchases.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).map(p => `
+          <tr class="border-b border-slate-50 hover:bg-slate-50">
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
+            <td class="px-4 py-3 text-sm text-slate-700">${p.notes || 'Purchase Bill'}</td>
+            <td class="px-4 py-3 text-sm text-right font-medium text-red-600">+₹${Number(p.total || p.grand_total || 0).toFixed(2)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="3" class="text-center py-8 text-slate-400 text-sm">No credit purchases</td></tr>'}
+      </tbody>
+    </table>
+  `;
 
-  body.appendChild(leftCol);
-  body.appendChild(rightCol);
+  // Right Side: Payments
+  const rightCol = el('div', {});
+  rightCol.innerHTML = `
+    <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-slate-700 text-sm">Payments Made (Cash/UPI)</div>
+    <table class="w-full">
+      <thead>
+        <tr class="text-xs text-slate-400 uppercase border-b border-slate-100">
+          <th class="text-left px-4 py-2 font-medium">Date</th>
+          <th class="text-left px-4 py-2 font-medium">Mode</th>
+          <th class="text-right px-4 py-2 font-medium">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${payments.length ? payments.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).map(p => `
+          <tr class="border-b border-slate-50 hover:bg-slate-50">
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
+            <td class="px-4 py-3 text-sm text-slate-700 uppercase">${p.payment_mode}</td>
+            <td class="px-4 py-3 text-sm text-right font-medium text-emerald-600">-₹${Number(p.amount || 0).toFixed(2)}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="3" class="text-center py-8 text-slate-400 text-sm">No payments made</td></tr>'}
+      </tbody>
+    </table>
+  `;
+
+  grid.appendChild(leftCol);
+  grid.appendChild(rightCol);
+  body.appendChild(grid);
   card.appendChild(body);
 
-  // Footer Actions
-  card.appendChild(el('div', { class: 'p-4 border-t border-slate-200 bg-white flex justify-end gap-3 shrink-0' }, [
-    el('button', {
-      class: 'px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-sm transition',
-      onclick: () => { overlay.remove(); openPurchaseModal(root, supplier.id); }
-    }, '+ Record Purchase'),
-    el('button', {
-      class: 'px-5 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-sm transition',
-      onclick: () => { overlay.remove(); openPaymentModal(root, supplier.id, balance); }
-    }, '+ Record Payment')
-  ]));
+  // Footer (Simple actions)
+  const footer = el('div', { class: 'p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3 shrink-0' });
+  footer.innerHTML = `
+    <button id="btn-rec-purchase" class="px-5 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm shadow-sm transition">Record Purchase</button>
+    <button id="btn-rec-payment" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-sm transition">Record Payment</button>
+  `;
+  
+  footer.querySelector('#btn-rec-purchase').onclick = () => { overlay.remove(); openPurchaseModal(root, supplier.id); };
+  footer.querySelector('#btn-rec-payment').onclick = () => { overlay.remove(); openPaymentModal(root, supplier.id, balance); };
+  
+  card.appendChild(footer);
 
   overlay.appendChild(card);
   document.body.appendChild(overlay);
