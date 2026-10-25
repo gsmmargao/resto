@@ -49,9 +49,8 @@ export async function renderReports(root) {
       ['sales', 'Sales Trend'],
       ['items', 'Item Mix'],
       ['staff', 'Staff'],
-      ['cash', 'Cash'],
       ['upi', 'UPI'],
-      ['cashbook', 'Cashbook (Detailed)'],
+      ['cashbook', 'Cashbook'],
       ['voided', 'Voided Items'],
       ['bills', 'Bills'],
       ['kots', 'KOTs'],
@@ -1505,4 +1504,157 @@ async function renderKOTs() {
   ]);
   wrapper.appendChild(table);
   container.appendChild(wrapper);
+}
+
+
+// ============================================================
+// NEW SIMPLE CASHBOOK LOGIC
+// ============================================================
+async function renderCashbookNew() {
+  const container = document.querySelector('.report-content') || document.getElementById('reports-content') || document.body;
+  container.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Cashbook...</div>';
+  
+  const outletId = store.state.outlet?.id;
+  const tenantId = store.state.tenant?.id;
+  if (!outletId || !tenantId) return;
+
+  // Use the global date picker state if available, else default to today
+  const fromDate = window.state?.fromDate || new Date().toISOString().split('T')[0];
+  const toDate = window.state?.toDate || new Date().toISOString().split('T')[0];
+
+  try {
+    // Fetch Sales (Money In)
+    const { data: payments } = await supabase.from('payments')
+      .select('*, invoices(invoice_number)')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('mode', ['cash', 'upi']);
+
+    // Fetch Purchases (Money Out)
+    const { data: purchases } = await supabase.from('purchases')
+      .select('*, suppliers(name)')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('payment_mode', ['cash', 'upi']);
+
+    const { data: supplierPays } = await supabase.from('supplier_payments')
+      .select('*, suppliers(name)')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('payment_mode', ['cash', 'upi']);
+
+    let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
+    const ledgerIn = [];
+    const ledgerOut = [];
+
+    // Process Sales (IN)
+    (payments || []).forEach(p => {
+      const amt = Number(p.amount);
+      if (p.mode === 'cash') cashIn += amt;
+      if (p.mode === 'upi') upiIn += amt;
+      ledgerIn.push({ date: p.created_at, desc: `Invoice #${p.invoices?.invoice_number || 'N/A'}`, mode: p.mode.toUpperCase(), amount: amt });
+    });
+
+    // Process Purchases (OUT)
+    (purchases || []).forEach(p => {
+      const amt = Number(p.total);
+      if (p.payment_mode === 'cash') cashOut += amt;
+      if (p.payment_mode === 'upi') upiOut += amt;
+      ledgerOut.push({ date: p.created_at, desc: `${p.suppliers?.name || 'Supplier'} - ${p.notes || 'Purchase'}`, mode: p.payment_mode.toUpperCase(), amount: amt });
+    });
+
+    // Process Supplier Payments (OUT)
+    (supplierPays || []).forEach(p => {
+      const amt = Number(p.amount);
+      if (p.payment_mode === 'cash') cashOut += amt;
+      if (p.payment_mode === 'upi') upiOut += amt;
+      ledgerOut.push({ date: p.created_at, desc: `Payment to ${p.suppliers?.name || 'Supplier'}`, mode: p.payment_mode.toUpperCase(), amount: amt });
+    });
+
+    // Sort ledgers by date
+    ledgerIn.sort((a, b) => new Date(a.date) - new Date(b.date));
+    ledgerOut.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    const cashBalance = cashIn - cashOut;
+    const upiBalance = upiIn - upiOut;
+
+    // Build UI
+    container.innerHTML = '';
+    
+    const grid = el('div', { class: 'grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-6xl mx-auto mt-4' });
+
+    // LEFT COLUMN: MONEY IN
+    const colIn = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm' });
+    colIn.appendChild(el('div', { class: 'px-4 py-3 bg-emerald-50 border-b border-emerald-100 text-emerald-800 font-bold text-sm' }, 'Money In (Sales)'));
+    
+    const tableIn = el('table', { class: 'w-full text-sm' });
+    tableIn.innerHTML = `<thead><tr class="text-xs text-slate-500 uppercase border-b border-slate-100"><th class="text-left px-4 py-2">Time</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr></thead><tbody></tbody>`;
+    const tbodyIn = tableIn.querySelector('tbody');
+    
+    ledgerIn.forEach(l => {
+      tbodyIn.appendChild(el('tr', { class: 'border-b border-slate-50' }, [
+        el('td', { class: 'px-4 py-2 text-xs text-slate-500' }, new Date(l.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})),
+        el('td', { class: 'px-4 py-2 text-slate-700' }, l.desc),
+        el('td', { class: 'px-4 py-2 text-right font-semibold text-emerald-600' }, `+₹${l.amount.toFixed(2)}`)
+      ]));
+    });
+    if (!ledgerIn.length) tbodyIn.innerHTML = '<tr><td colspan="3" class="text-center py-4 text-slate-400 text-xs">No sales recorded</td></tr>';
+    colIn.appendChild(tableIn);
+
+    // RIGHT COLUMN: MONEY OUT
+    const colOut = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm' });
+    colOut.appendChild(el('div', { class: 'px-4 py-3 bg-red-50 border-b border-red-100 text-red-800 font-bold text-sm' }, 'Money Out (Purchases)'));
+    
+    const tableOut = el('table', { class: 'w-full text-sm' });
+    tableOut.innerHTML = `<thead><tr class="text-xs text-slate-500 uppercase border-b border-slate-100"><th class="text-left px-4 py-2">Time</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr></thead><tbody></tbody>`;
+    const tbodyOut = tableOut.querySelector('tbody');
+
+    ledgerOut.forEach(l => {
+      tbodyOut.appendChild(el('tr', { class: 'border-b border-slate-50' }, [
+        el('td', { class: 'px-4 py-2 text-xs text-slate-500' }, new Date(l.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})),
+        el('td', { class: 'px-4 py-2 text-slate-700' }, l.desc),
+        el('td', { class: 'px-4 py-2 text-right font-semibold text-red-600' }, `-₹${l.amount.toFixed(2)}`)
+      ]));
+    });
+    if (!ledgerOut.length) tbodyOut.innerHTML = '<tr><td colspan="3" class="text-center py-4 text-slate-400 text-xs">No purchases recorded</td></tr>';
+    colOut.appendChild(tableOut);
+
+    grid.appendChild(colIn);
+    grid.appendChild(colOut);
+    container.appendChild(grid);
+
+    // BOTTOM: BALANCES
+    const summary = el('div', { class: 'grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-6xl mx-auto mt-6 pb-10' });
+    
+    summary.appendChild(el('div', { class: 'bg-slate-800 text-white rounded-xl p-5 flex justify-between items-center shadow-lg' }, [
+      el('div', {}, [
+        el('div', { class: 'text-slate-400 text-xs uppercase tracking-wide font-semibold' }, 'Net Cash Balance'),
+        el('div', { class: 'text-3xl font-bold mt-1 text-emerald-400' }, `₹${cashBalance.toFixed(2)}`)
+      ]),
+      el('div', { class: 'text-right text-xs text-slate-400 space-y-1' }, [
+        el('div', {}, `In: ₹${cashIn.toFixed(2)}`),
+        el('div', {}, `Out: ₹${cashOut.toFixed(2)}`)
+      ])
+    ]));
+
+    summary.appendChild(el('div', { class: 'bg-slate-800 text-white rounded-xl p-5 flex justify-between items-center shadow-lg' }, [
+      el('div', {}, [
+        el('div', { class: 'text-slate-400 text-xs uppercase tracking-wide font-semibold' }, 'Net UPI Balance'),
+        el('div', { class: 'text-3xl font-bold mt-1 text-blue-400' }, `₹${upiBalance.toFixed(2)}`)
+      ]),
+      el('div', { class: 'text-right text-xs text-slate-400 space-y-1' }, [
+        el('div', {}, `In: ₹${upiIn.toFixed(2)}`),
+        el('div', {}, `Out: ₹${upiOut.toFixed(2)}`)
+      ])
+    ]));
+
+    container.appendChild(summary);
+
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm">Error loading cashbook: ${err.message}</div>`;
+  }
 }

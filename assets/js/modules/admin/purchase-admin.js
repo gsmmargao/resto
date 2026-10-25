@@ -33,14 +33,27 @@ async function loadAll() {
   const tenantId = store.state.tenant.id;
   const outletId = store.state.outlet.id;
 
-  const [poRes, supRes, ingRes, unitRes] = await Promise.all([
+  const [poRes, quickRes, supRes, ingRes, unitRes] = await Promise.all([
     supabase.from('purchase_orders').select('*, suppliers(name)').eq('outlet_id', outletId).order('created_at', { ascending: false }),
+    supabase.from('purchases').select('*, suppliers(name)').eq('tenant_id', tenantId).order('created_at', { ascending: false }),
     supabase.from('suppliers').select('id, name, is_active').eq('tenant_id', tenantId).eq('is_active', true).order('name'),
     supabase.from('ingredients').select('id, name, unit_id, avg_cost').eq('tenant_id', tenantId).eq('is_active', true).order('name'),
     supabase.from('units').select('id, name, abbreviation').eq('tenant_id', tenantId)
   ]);
 
-  state.pos = poRes.data || [];
+  const fullPos = (poRes.data || []).map(po => ({ ...po, _isQuickPurchase: false }));
+  const quickPurchases = (quickRes.data || []).map(p => ({
+      id: p.id,
+      po_number: p.notes || 'Quick Purchase',
+      grand_total: p.total,
+      status: p.status,
+      created_at: p.created_at,
+      supplier_id: p.supplier_id,
+      suppliers: p.suppliers,
+      _isQuickPurchase: true
+  }));
+
+  state.pos = [...fullPos, ...quickPurchases].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   state.suppliers = supRes.data || [];
   
   const unitsMap = new Map((unitRes.data || []).map(u => [u.id, u]));
