@@ -178,7 +178,7 @@ function buildCard(table, openOrder, onPickTable) {
           }
       }, [
           el('div', { class: 'flex justify-between items-start' }, [
-              el('span', { class: 'font-bold text-xl' }, table.name),
+              el('span', { class: 'font-bold text-xl' }, table.is_takeaway ? table.name.split(' - ')[0] : table.name),
               el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, 'New'),
           ]),
           el('div', { class: 'text-sm opacity-90 font-medium' }, 'Click to create')
@@ -233,7 +233,7 @@ function buildCard(table, openOrder, onPickTable) {
           }
       }, [
           el('div', { class: 'flex justify-between items-start' }, [
-              el('span', { class: 'font-bold text-xl' }, table.name),
+              el('span', { class: 'font-bold text-xl' }, table.is_takeaway ? table.name.split(' - ')[0] : table.name),
               el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, `1 pax`),
           ]),
           openOrder ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
@@ -256,12 +256,27 @@ function buildCard(table, openOrder, onPickTable) {
     merged:    'bg-purple-500',
   }[status] || 'bg-slate-400';
 
+    const isTakeaway = table.is_takeaway;
+  const displayName = isTakeaway ? table.name.split(' - ')[0] : table.name;
+
   return el('button', {
     class: `${color} text-white rounded-xl p-3 text-left shadow-sm transition h-28 flex flex-col justify-between`,
-    onclick: () => { if (typeof onPickTable === 'function') onPickTable(table, openOrder); },
+    onclick: async () => {
+      // If it's a Takeaway and there's no active order (empty table)
+      if (isTakeaway && !openOrder) {
+          if (confirm(`This Take-away is empty. Do you want to delete it from the floor plan?`)) {
+              await supabase.from('dining_tables').delete().eq('id', table.id);
+              if (window.store) {
+                  window.store.set('tables', window.store.state.tables.filter(t => t.id !== table.id));
+              }
+          }
+          return;
+      }
+      if (typeof onPickTable === 'function') onPickTable(table, openOrder);
+    },
   }, [
     el('div', { class: 'flex justify-between items-start' }, [
-      el('span', { class: 'font-bold text-xl' }, table.name),
+      el('span', { class: 'font-bold text-xl' }, displayName),
       el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, `${table.capacity} pax`),
     ]),
     openOrder

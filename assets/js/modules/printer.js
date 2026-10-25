@@ -175,7 +175,10 @@ export function buildReceiptBytes(data) {
   b.line(padLine(`Inv: ${data.invoice.number}`, data.invoice.date, W));
   b.line(padLine(`Order: ${data.invoice.orderNumber}`,
                  data.invoice.orderType.replace('_',' '), W));
-  if (data.invoice.table) b.line(`Table: ${data.invoice.table}`);
+  if (data.invoice.table) {
+    const cleanName = data.invoice.table.split(' - ')[0];
+    b.line(cleanName.toLowerCase().startsWith('takeaway') || cleanName.toLowerCase().startsWith('take-away') ? cleanName : `Table: ${cleanName}`);
+  }
   if (data.customer.phone) b.line(padLine(data.customer.name || '', data.customer.phone, W));
   if (data.customer.gstin) b.line(`GSTIN: ${data.customer.gstin}`);
   b.hr('-');
@@ -267,7 +270,16 @@ export function buildKOTBytes({ kot, items, tableName, waiterName, orderType }) 
 
   // Metadata
   b.align('left').bold(true);
-  b.line(padLine(`KOT: ${kot.kot_number}`, tableName ? `Table: ${tableName}` : orderType.toUpperCase(), W));
+  const cleanTable = tableName ? tableName.split(' - ')[0] : '';
+  const displayTable = orderType === 'takeaway' ? (cleanTable || 'Take-away') : (cleanTable ? `Table: ${cleanTable}` : orderType.toUpperCase());
+  const dateStr = new Date().toLocaleDateString('en-GB');
+  
+  if (typeof b.bold === 'function') b.bold(true);
+  if (typeof b.align === 'function') b.align('center');
+  b.line(`KOT: ${kot.kot_number}`);
+  b.line(`${displayTable} · ${dateStr}`);
+  if (typeof b.align === 'function') b.align('left');
+  if (typeof b.bold === 'function') b.bold(false);
   b.bold(false);
   b.line(padLine(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }), waiterName ? `Waiter: ${waiterName}` : '', W));
   b.hr('-');
