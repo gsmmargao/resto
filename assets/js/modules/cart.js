@@ -122,23 +122,12 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
       el('span', { class: 'font-medium' }, 'Editing existing order'),
       el('span', { class: 'text-[10px] opacity-80 font-mono' }, cart.orderId.slice(0, 8)),
     ]) : null,
-    el('div', { class: 'flex gap-1.5 mb-2' }, [
-      ...['dine_in', 'takeaway', 'delivery'].map(k =>
-        el('button', {
-          class: `flex-1 px-2 py-1.5 rounded-md text-xs font-medium capitalize transition ${cart.orderType === k ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`,
-          onclick: () => {
-            if (cart.orderId) { toast('Cannot change type on existing order', 'warn'); return; }
-            cart.orderType = k; if (k !== 'dine_in') cart.tableId = null;
-            notifyCartChanged();
-          },
-        }, k.replace('_', ' ')),
-      ),
-    ]),
+    
     cart.orderType === 'dine_in' ? el('button', {
       class: `w-full text-left px-3 py-2 rounded-md border text-sm flex justify-between items-center ${cart.tableId ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-300 text-slate-600 hover:border-indigo-400'} ${cart.orderId ? 'opacity-60' : ''}`,
       onclick: () => { if (cart.orderId) { toast('Table locked', 'warn'); return; } onPickTable(); },
     }, [
-      el('span', {}, cart.tableId ? `Table: ${store.state.tables.find(x=>x.id===cart.tableId)?.name || '—'}` : 'Select table…'),
+      el('span', {}, cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away') : (cart.tableId ? `Table: ${store.state.tables.find(x=>x.id===cart.tableId)?.name || '—'}` : 'Select table…')),
       el('span', { class: 'text-xs text-slate-500' }, `${cart.guestCount} pax`),
     ]) : null,
   ].filter(Boolean));

@@ -121,7 +121,7 @@ export async function sendKOT() {
         body: JSON.stringify({
           kot: kot.kot_number,
           items: items.map(i => ({ name: i.name_snapshot, quantity: i.quantity, variant: i.variant_name, notes: i.notes })),
-          tableName: tableRow?.name || 'Takeaway',
+          tableName: cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away').split(' - ')[0] : (tableRow?.name || 'Takeaway').split(' - ')[0],
           waiterName: member?.display_name
         })
       }).then(res => {
@@ -134,7 +134,7 @@ export async function sendKOT() {
       printKOT({
         kot: kot,
         items: items,
-        tableName: tableRow?.name || null,
+        tableName: cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away').split(' - ')[0] : (tableRow?.name || null)?.split(' - ')[0],
         waiterName: member?.display_name || null,
         orderType: cart.orderType
       }).catch(err => console.error('Print error:', err));

@@ -39,59 +39,127 @@
     
 
 
-    <!-- QUICK_TAKEAWAY_SCRIPT -->
-    <script>
-      document.addEventListener('DOMContentLoaded', () => {
-        setInterval(() => {
-          const elements = Array.from(document.querySelectorAll('button, a, div'));
-          const ordersTab = elements.find(el => el.textContent.trim() === 'Orders' && el.offsetParent !== null);
-          
-          if (ordersTab && !document.getElementById('quick-takeaway-btn')) {
-            const btn = document.createElement('button');
-            btn.id = 'quick-takeaway-btn';
-            btn.className = 'ml-4 px-4 py-1.5 bg-green-600 text-white text-sm font-bold rounded-md hover:bg-green-700 transition shadow-sm';
-            btn.textContent = '🛍️ Quick Takeaway';
-            
-            btn.onclick = () => {
-              // We don't need a fake UUID anymore.
-              // We set tableId to null so the database accepts it.
-              const tempTable = {
-                id: null,             // No table ID for takeaway
-                name: 'Takeaway',     // Display name
-                section_id: 'takeaway',
-                status: 'occupied',
-                capacity: 1,
-                is_takeaway: true
-              };
-              
-              if (window.store) {
-                 // Set the active table in the UI
-                 window.store.patch('ui', { activeTable: tempTable });
-                 
-                 // Set the cart to have no table ID and order type 'takeaway'
-                 window.store.patch('cart', { 
-                     tableId: null,     // <--- This fixes the foreign key error
-                     orderType: 'takeaway' 
-                 });
-              }
-              
-              // Navigate to POS tab
-              const posTab = elements.find(el => el.textContent.trim() === 'POS' && el.offsetParent !== null);
-              if (posTab) posTab.click();
-              
-              // Auto-click Takeaway button on POS screen to ensure UI updates
-              setTimeout(() => {
-                const posTakeawayBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim().toLowerCase() === 'takeaway');
-                if (posTakeawayBtn) posTakeawayBtn.click();
-              }, 400);
-            };
-            
-            ordersTab.parentElement.appendChild(btn);
-          }
-        }, 500);
-      });
-    </script>
-    <!-- END_QUICK_TAKEAWAY_SCRIPT -->
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+
+
+    
+
+
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
+
+
+    
 
 </body>
 </html>

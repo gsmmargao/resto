@@ -5,7 +5,6 @@ import { cachedQuerySafe, CACHE_KEYS } from './offline-cache.js';
 
 export async function loadTables() {
   const outletId = store.state.outlet?.id;
-  const tenantId = store.state.tenant?.id;
   if (!outletId) return;
 
   const [tRes, aRes] = await Promise.all([
@@ -26,25 +25,21 @@ export async function loadTables() {
   store.set('tables', tRes.data || []);
   store.set('areas',  aRes.data || []);
 
-  // Open orders are NOT cached — they must be live. If we're offline,
-  // we keep the previous state so the floor plan still renders.
   try {
     const { data, error } = await supabase.from('orders')
-      .select('id, order_number, table_id, status, grand_total, placed_at, guest_count, customer_name')
+      .select('id, order_number, table_id, status, grand_total, placed_at, guest_count, customer_name, order_type, table_name_snapshot')
       .eq('outlet_id', outletId)
       .in('status', ['open','in_kitchen','partially_ready','ready','served','billed','partially_paid']);
     if (error) throw error;
     store.set('openOrders', data || []);
   } catch (e) {
     console.warn('[tables] open orders not refreshed (offline?)');
-    // Leave existing store.state.openOrders untouched
   }
 }
 
 export function renderTablesView(root, onPickTable) {
   root.innerHTML = '';
   
-  // Create a strict flex container so the body can scroll independently
   const container = el('div', { class: 'h-full flex flex-col' });
 
   const header = el('div', { class: 'p-4 border-b border-slate-200 bg-white shrink-0 flex flex-wrap items-center justify-between gap-2' }, [
@@ -60,9 +55,36 @@ export function renderTablesView(root, onPickTable) {
   const body = el('div', { class: 'flex-1 min-h-0 overflow-y-auto p-4 bg-slate-100' });
 
   const areas  = store.state.areas || [];
-  const tables = store.state.tables || [];
+  let tables = [...(store.state.tables || [])];
+  tables = tables.filter(t => !(t.is_takeaway && t.status === 'available')); 
+  const openOrders = store.state.openOrders || [];
+  
   const openByTable = new Map();
-  (store.state.openOrders || []).forEach(o => { if (o.table_id) openByTable.set(o.table_id, o); });
+  openOrders.forEach(o => { if (o.table_id) openByTable.set(o.table_id, o); });
+
+  const firstAreaId = areas[0]?.id || tables[0]?.area_id || 'unassigned';
+
+  const activeTakeaways = openOrders.filter(o => o.order_type === 'takeaway');
+  activeTakeaways.forEach(o => {
+      tables.push({
+          id: o.id,
+          name: o.table_name_snapshot || 'Take-away',
+          capacity: 1,
+          status: 'occupied',
+          area_id: firstAreaId,
+          is_virtual_takeaway: true,
+          _openOrder: o
+      });
+  });
+
+  tables.unshift({
+      id: 'NEW_TAKEAWAY_TRIGGER',
+      name: '+ Takeaway',
+      capacity: 1,
+      status: 'available',
+      area_id: firstAreaId,
+      is_trigger: true
+  });
 
   if (!tables.length) {
     body.appendChild(el('div', { class: 'text-center text-slate-500 py-20 text-sm' }, 'No tables configured'));
@@ -79,7 +101,7 @@ export function renderTablesView(root, onPickTable) {
       body.appendChild(el('div', { class: 'mb-6' }, [
         el('h3', { class: 'text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3' }, areaName),
         el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 md:gap-3' },
-          list.map(t => buildCard(t, openByTable.get(t.id), onPickTable))),
+          list.map(t => buildCard(t, openByTable.get(t.id) || t._openOrder, onPickTable))),
       ]));
     });
   }
@@ -87,9 +109,143 @@ export function renderTablesView(root, onPickTable) {
   container.appendChild(header);
   container.appendChild(body);
   root.appendChild(container);
+
+  // Start live timer updates every 10 seconds
+  if (window._tablesTimerInterval) clearInterval(window._tablesTimerInterval);
+  window._tablesTimerInterval = setInterval(() => {
+      document.querySelectorAll('.live-timer').forEach(el => {
+          const ts = el.getAttribute('data-ts');
+          if (ts) {
+              el.textContent = fmtRelative(ts);
+          }
+      });
+  }, 10000);
 }
 
 function buildCard(table, openOrder, onPickTable) {
+  if (table.is_trigger) {
+      return el('button', {
+          class: 'bg-amber-500 hover:bg-amber-600 text-white rounded-xl p-3 text-left shadow-sm transition h-28 flex flex-col justify-between',
+          onclick: async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const btn = e.currentTarget;
+              btn.innerHTML = '<div class="text-center font-bold mt-8 animate-pulse">Creating...</div>';
+              
+              try {
+                  // 1. Generate Daily Sequence
+                  const today = new Date().toISOString().split('T')[0];
+                  let seq = parseInt(localStorage.getItem('takeaway_seq') || '0');
+                  if (localStorage.getItem('takeaway_date') !== today) {
+                      seq = 0;
+                      localStorage.setItem('takeaway_date', today);
+                  }
+                  seq++;
+                  localStorage.setItem('takeaway_seq', seq);
+                  const name = 'Take-away ' + seq;
+
+                  const m1Data = window.store.state.tables.find(t => t.name === 'M1');
+
+                  // 2. Insert REAL table in DB to satisfy router
+                  const { data: newTable, error } = await supabase.from('dining_tables').insert([{
+                      name: name + ' - ' + new Date().toLocaleDateString('en-GB').replace(/\//g, ''),
+                      capacity: 1,
+                      status: 'occupied',
+                      tenant_id: window.store.state.tenant.id,
+                      outlet_id: window.store.state.outlet.id,
+                      area_id: m1Data ? m1Data.area_id : null,
+                      is_takeaway: true
+                  }]).select().single();
+
+                  if (newTable) {
+                      newTable.name = name; // Override the DB name for the UI
+                      // 3. Add to state and open
+                      const currentTables = window.store.state.tables || [];
+                      window.store.set('tables', [...currentTables, newTable]);
+                      
+                      if (typeof onPickTable === 'function') {
+                          onPickTable(newTable, null);
+                      }
+                  } else {
+                      console.error(error);
+                      alert('Error creating takeaway: ' + (error ? error.message : 'Unknown'));
+                      btn.innerHTML = '<div class="font-bold text-lg">+ Takeaway</div><div class="text-sm opacity-90 mt-2">Click to create</div>';
+                  }
+              } catch (err) {
+                  console.error(err);
+                  btn.innerHTML = '<div class="font-bold text-lg">+ Takeaway</div><div class="text-sm opacity-90 mt-2">Click to create</div>';
+              }
+          }
+      }, [
+          el('div', { class: 'flex justify-between items-start' }, [
+              el('span', { class: 'font-bold text-xl' }, table.name),
+              el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, 'New'),
+          ]),
+          el('div', { class: 'text-sm opacity-90 font-medium' }, 'Click to create')
+      ]);
+  }
+
+  if (table.is_virtual_takeaway) {
+      return el('button', {
+          class: 'bg-red-500 hover:bg-red-600 text-white rounded-xl p-3 text-left shadow-sm transition h-28 flex flex-col justify-between',
+          onclick: async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              
+              if (window.store && openOrder) {
+                  const btn = e.currentTarget;
+                  const originalHtml = btn.innerHTML;
+                  btn.innerHTML = '<div class="text-center font-bold mt-8 animate-pulse">Loading...</div>';
+
+                  try {
+                      // Fetch items directly to load the cart
+                      const { data: items } = await supabase.from('order_items').select('*').eq('order_id', openOrder.id);
+                      const cartItems = (items || []).map(it => ({
+                          menu_item_id: it.menu_item_id || it.id,
+                          name: it.name_snapshot || it.description || 'Item',
+                          price: Number(it.unit_price),
+                          quantity: Number(it.quantity),
+                          tax_rate: Number(it.tax_rate || 0)
+                      }));
+
+                      // Patch store directly
+                      window.store.patch('ui', { 
+                          activeTable: { id: openOrder.id, name: table.name, is_takeaway: true },
+                          activeCategory: null,
+                          search: ''
+                      });
+                      window.store.patch('cart', {
+                          orderId: openOrder.id,
+                          orderType: 'takeaway',
+                          tableId: null,
+                          tableName: table.name,
+                          items: cartItems
+                      });
+                      
+                      // Force POS tab
+                      const posTab = Array.from(document.querySelectorAll('button, a')).find(el => el.textContent.trim() === 'POS');
+                      if (posTab) posTab.click();
+                  } catch (err) {
+                      console.error(err);
+                      btn.innerHTML = originalHtml;
+                  }
+              }
+          }
+      }, [
+          el('div', { class: 'flex justify-between items-start' }, [
+              el('span', { class: 'font-bold text-xl' }, table.name),
+              el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, `1 pax`),
+          ]),
+          openOrder ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
+              el('div', { class: 'truncate' }, `#${openOrder.order_number}`),
+              el('div', { class: 'flex justify-between' }, [
+                  el('span', {}, fmtMoney(openOrder.grand_total || 0)),
+                  el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
+              ]),
+          ]) : el('div', { class: 'text-[11px] opacity-90' }, 'Occupied')
+      ]);
+  }
+
   const status = openOrder ? 'occupied' : (table.status || 'available');
   const color = {
     available: 'bg-emerald-500 hover:bg-emerald-600',
@@ -105,18 +261,18 @@ function buildCard(table, openOrder, onPickTable) {
     onclick: () => { if (typeof onPickTable === 'function') onPickTable(table, openOrder); },
   }, [
     el('div', { class: 'flex justify-between items-start' }, [
-      el('span', { class: 'font-semibold text-base' }, table.name),
-      el('span', { class: 'text-[10px] uppercase opacity-90' }, `${table.capacity} pax`),
+      el('span', { class: 'font-bold text-xl' }, table.name),
+      el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, `${table.capacity} pax`),
     ]),
     openOrder
-      ? el('div', { class: 'text-[11px] space-y-0.5 opacity-95' }, [
+      ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
           el('div', { class: 'truncate' }, `#${openOrder.order_number}`),
           el('div', { class: 'flex justify-between' }, [
             el('span', {}, fmtMoney(openOrder.grand_total || 0)),
-            el('span', {}, fmtRelative(openOrder.placed_at)),
+            el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
           ]),
         ])
-      : el('div', { class: 'text-[11px] opacity-90' }, status),
+      : el('div', { class: 'text-sm opacity-90 font-medium uppercase' }, status),
   ]);
 }
 

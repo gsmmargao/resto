@@ -81,10 +81,7 @@ function paint(root) {
         class: 'px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium',
         onclick: async () => { await refresh(); paint(root); toast('Refreshed', 'success', 1000); },
       }, 'Refresh'),
-      el('button', {
-        class: 'px-3 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold',
-        onclick: () => openSecurityModal(root),
-      }, '🔒 Set Cancel Password'),
+      null,
       el('button', {
         class: 'px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold',
         onclick: () => openCreateStaffModal(root),

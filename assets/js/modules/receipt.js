@@ -15,7 +15,13 @@ export function buildReceiptData({ tenant, outlet, order, items, invoice, paymen
       date:        new Date(invoice.invoice_time).toLocaleString(CONFIG.LOCALE),
       orderNumber: order?.order_number || '',
       orderType:   order?.order_type || '',
-      table:       tableName || order?.table_name_snapshot || '',
+      table: (() => {
+        const rawName = tableName || order?.table_name_snapshot || '';
+        if (order?.order_type === 'takeaway') {
+            return rawName.split(' - ')[0] || 'Take-away';
+        }
+        return rawName;
+      })(),
     },
     customer: {
       name:  customer?.name  || '',
