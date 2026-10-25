@@ -30,7 +30,7 @@ async function loadAll() {
   const tenantId = store.state.tenant.id;
   const [supRes, poRes, payRes] = await Promise.all([
     supabase.from('suppliers').select('*').eq('tenant_id', tenantId).order('name'),
-    supabase.from('purchase_orders').select('id, po_number, grand_total, created_at, supplier_id').eq('tenant_id', tenantId),
+    supabase.from('purchases').select('id, notes, total, created_at, supplier_id').eq('tenant_id', tenantId),
     supabase.from('supplier_payments').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false })
   ]);
 
