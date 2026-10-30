@@ -130,8 +130,7 @@ function renderShell(root) {
       else {
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('dashboard') }, 'POS'));
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('kds') }, 'Kitchen'));
-        navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('cash') }, 'Cash'));
-        navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('upi-book') }, 'UPI'));
+        navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('cash') }, 'Counter'));
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('stock') }, 'Stock'));
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('reports') }, 'Reports'));
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('tips-admin') }, 'Tips'));

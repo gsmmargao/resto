@@ -54,7 +54,7 @@ export async function loadOrderIntoCart(orderId) {
   if (oErr || !order) { toast('Failed to load order', 'error'); return false; }
 
   const { data: items, error: iErr } = await supabase
-    .from('order_items').select('*').eq('order_id', orderId)
+    .from('order_items').select('*').eq('order_id', orderId).neq('status', 'void')
     .neq('status', 'cancelled').order('created_at');
   if (iErr) { toast('Failed to load items', 'error'); return false; }
 
@@ -72,6 +72,9 @@ export async function loadOrderIntoCart(orderId) {
   store.state.cart = {
     orderId: order.id, orderType: order.order_type, tableId: order.table_id,
     guestCount: order.guest_count || 1, items: lines,
+    customerId: order.customer_id || null,
+    customerName: order.customer_name_snapshot || '',
+    customerPhone: order.customer_phone_snapshot || '',
     discount: { type: 'percent', value: 0, amount: 0, name: '' },
     serviceChargePct: Number(order.service_charge_pct) || 0,
     deliveryCharge: Number(order.delivery_charge) || 0, tipAmount: 0,
@@ -157,9 +160,12 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     el('button', {
       class: 'col-span-2 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium',
       onclick: () => {
-        if (cart.orderId && !hasNewItems) {
-          onClear(); // Cancels DB order and clears UI
-        } else if (cart.orderId) {
+        if (cart.orderId) {
+          if (!hasNewItems) {
+            toast('No new items to discard', 'warn');
+            return;
+          }
+          // Only remove UNSAVED items - keep locked (SENT) items
           cart.items = cart.items.filter(l => l._saved);
           _computeTotals(cart);
           notifyCartChanged();

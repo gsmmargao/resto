@@ -26,7 +26,12 @@ export async function openCheckoutModal() {
   const orderId = cart.orderId;
 
   const state = {
-    customer: { phone: '', name: '', gstin: '', id: null },
+    customer: { 
+        phone: cart.customerPhone || '', 
+        name: cart.customerName || '', 
+        gstin: '', 
+        id: cart.customerId || null 
+    },
     tipAmount: 0,
   };
 
@@ -72,8 +77,8 @@ export async function openCheckoutModal() {
 
   left.appendChild(el('div', { class: 'space-y-2 pt-2 border-t border-slate-200' }, [
     el('div', { class: 'font-semibold text-slate-700 text-sm' }, 'Customer (optional)'),
-    el('input', { type: 'tel', placeholder: 'Phone Number', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.phone = e.target.value.trim(); } }),
-    el('input', { type: 'text', placeholder: 'Name', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.name = e.target.value.trim(); } }),
+    el('input', { type: 'tel', placeholder: 'Phone Number', value: state.customer.phone, class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.phone = e.target.value.trim(); } }),
+    el('input', { type: 'text', placeholder: 'Name', value: state.customer.name, class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.name = e.target.value.trim(); } }),
     el('input', { type: 'text', placeholder: 'GSTIN (B2B)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.gstin = e.target.value.trim(); } }),
   ]));
 
@@ -285,6 +290,13 @@ async function completePayment(orderId, totals, customer, payments, tipAmount) {
   const result = await saveInvoiceAndPayments({
     orderId, totals, customer, payments, tipAmount,
   });
+
+  // NEW: Mark all KOTs for this order as SERVED so they clear from the KDS
+  try {
+    await supabase.from('kots').update({ status: 'served' }).eq('order_id', orderId);
+  } catch (e) {
+    console.error('[billing] Failed to mark KOTs as served:', e);
+  }
 
   try {
     publishThankYou({

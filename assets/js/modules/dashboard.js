@@ -3,7 +3,7 @@ import { store } from '../store.js';
 import { el, fmtMoney, fmtRelative, toast, confirmDialog } from '../utils.js';
 import { renderMenuPanel } from './menu.js';
 import { renderCartPanel, addToCart, clearCart, loadOrderIntoCart } from './cart.js';
-import { renderTablesView, loadTables, renderTablePicker } from './tables.js';
+import { openTableActionModal, renderTablesView, loadTables, renderTablePicker } from './tables.js';
 import { sendKOT } from './kot.js';
 import { openCheckoutModal } from './billing.js';
 import { navigate } from '../router.js';
@@ -154,11 +154,11 @@ function renderPOS(root) {
 function renderTables(root) {
   renderTablesView(root, async (table, openOrder) => {
     if (openOrder) {
-      const ok = await confirmDialog(
-        `Table ${table.name} has an open order #${openOrder.order_number} for ${fmtMoney(openOrder.grand_total)}.\n\nLoad it into the cart?`,
-        'Open order found',
-      );
-      if (ok) await openOrderIntoCart(openOrder.id, openOrder.order_number);
+      // Call our custom 4-option modal from tables.js
+      openTableActionModal(table, openOrder, async (t, o) => {
+        // This callback is triggered when user clicks "Take Order" or "Generate Bill"
+        await openOrderIntoCart(o.id, o.order_number);
+      });
     } else {
       const ok = await confirmDialog(`Start a new order at table ${table.name}?`, 'New order');
       if (ok) {
@@ -171,6 +171,16 @@ function renderTables(root) {
     }
   });
 }
+
+
+// Listen for KOT edits to reload the active cart
+window.addEventListener('order:reload', async (e) => {
+    const orderId = e.detail;
+    const order = window.store.state.openOrders.find(o => o.id === orderId);
+    if (order) {
+        await openOrderIntoCart(order.id, order.order_number);
+    }
+});
 
 function renderOrders(root) {
   const orders = store.state.openOrders || [];

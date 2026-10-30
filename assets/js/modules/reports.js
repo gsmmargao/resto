@@ -20,26 +20,59 @@ export async function renderReports(root) {
       el('p', { class: 'text-xs text-slate-500' }, store.state.outlet?.name || ''),
     ]),
     el('div', { class: 'flex items-center gap-2 flex-wrap' }, [
-      el('div', { class: 'flex items-center bg-slate-100 rounded-lg p-0.5' }, [
-        el('span', { class: 'px-2 text-xs font-semibold text-slate-500' }, 'From'),
+      el('div', { class: 'flex items-center gap-1 bg-slate-100 rounded-lg p-1' }, [
+        el('button', {
+            class: 'px-2 py-1.5 rounded hover:bg-slate-200 text-slate-600 transition font-bold',
+            onclick: () => {
+                state.startDate = shiftDate(state.startDate, -1);
+                state.endDate = shiftDate(state.endDate, -1);
+                renderReports(root);
+            }
+        }, '‹'),
+        
         el('input', {
           type: 'date', value: state.startDate,
-          class: 'px-3 py-1.5 rounded-md border-0 bg-transparent text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium',
-          onchange: (e) => { state.startDate = e.target.value; renderReports(root); }
+          class: 'px-2 py-1 rounded-md border-0 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium shadow-sm',
+          onchange: (e) => { 
+              state.startDate = e.target.value; 
+              if (state.endDate < state.startDate) state.endDate = state.startDate;
+              renderReports(root); 
+          }
         }),
-      ]),
-      el('div', { class: 'flex items-center bg-slate-100 rounded-lg p-0.5' }, [
-        el('span', { class: 'px-2 text-xs font-semibold text-slate-500' }, 'To'),
+        el('span', { class: 'text-slate-400 text-xs px-1 font-medium' }, 'to'),
         el('input', {
           type: 'date', value: state.endDate,
-          class: 'px-3 py-1.5 rounded-md border-0 bg-transparent text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium',
-          onchange: (e) => { state.endDate = e.target.value; renderReports(root); }
+          class: 'px-2 py-1 rounded-md border-0 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium shadow-sm',
+          onchange: (e) => { 
+              state.endDate = e.target.value; 
+              if (state.startDate > state.endDate) state.startDate = state.endDate;
+              renderReports(root); 
+          }
         }),
+        
+        el('button', {
+            class: 'px-2 py-1.5 rounded hover:bg-slate-200 text-slate-600 transition font-bold',
+            onclick: () => {
+                state.startDate = shiftDate(state.startDate, 1);
+                state.endDate = shiftDate(state.endDate, 1);
+                renderReports(root);
+            }
+        }, '›'),
+
+        el('button', {
+            class: 'ml-1 px-3 py-1.5 rounded bg-white text-indigo-600 text-xs font-bold shadow-sm border border-slate-200 hover:bg-indigo-50 transition',
+            onclick: () => {
+                const today = new Date().toISOString().split('T')[0];
+                state.startDate = today;
+                state.endDate = today;
+                renderReports(root);
+            }
+        }, 'Today')
       ]),
       el('button', {
-        class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium ml-2',
-        onclick: () => window.print(),
-      }, 'Print / PDF'),
+          class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-sm transition',
+          onclick: () => window.print()
+      }, 'Print / PDF')
     ]),
   ]);
 
@@ -119,38 +152,57 @@ function ioRow(label, value, isBold = false) {
 
 async function renderOverview() {
   const outletId = store.state.outlet.id;
-  const from = rangeStart().toISOString();
-  const to = rangeEnd().toISOString();
+  let fromDate = state.startDate || new Date().toISOString().split('T')[0];
+  let toDate = state.endDate || new Date().toISOString().split('T')[0];
+  const from = fromDate + 'T00:00:00';
+  const to = toDate + 'T23:59:59';
 
-  const [ordersRes, itemsRes, payRes, shiftRes] = await Promise.all([
-    supabase.from('orders').select('id, order_type, grand_total, placed_at, customer_id')
-      .eq('outlet_id', outletId).gte('placed_at', from).lte('placed_at', to)
-      .in('status', ['paid', 'partially_paid', 'billed']),
-    supabase.from('order_items').select('quantity, line_total, cost_price')
-      .eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to)
-      .neq('status', 'cancelled'),
-    supabase.from('payments').select('mode, amount, tip_amount, is_refund')
+  const [invRes, itemsRes, payRes, shiftRes] = await Promise.all([
+    supabase.from('invoices').select('id, order_id, grand_total, created_at, customer_id, orders(customer_id)')
+      .eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to),
+    supabase.from('order_items').select('order_id, quantity, line_total, cost_price')
+      .eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to).neq('status', 'cancelled'),
+    supabase.from('payments').select('order_id, mode, amount, tip_amount, is_refund')
       .eq('outlet_id', outletId).gte('paid_at', from).lte('paid_at', to).eq('status', 'success'),
     supabase.from('cash_registers').select('id, status, cash_difference')
       .eq('outlet_id', outletId).gte('opened_at', from).lte('opened_at', to),
   ]);
 
-  const orders = ordersRes.data || [];
-  const items = itemsRes.data || [];
-  const pays = (payRes.data || []).filter(p => !p.is_refund);
+  const rawInvoices = invRes.data || [];
+  const rawItems = itemsRes.data || [];
+  const rawPays = (payRes.data || []).filter(p => !p.is_refund);
   const shifts = shiftRes.data || [];
 
-  const gross = orders.reduce((s, o) => s + Number(o.grand_total || 0), 0);
-  const orderCount = orders.length;
-  const itemCount = items.reduce((s, i) => s + Number(i.quantity || 0), 0);
+  // Exclude 'no_charge' invoices
+  const noChargeOrderIds = new Set(
+    rawPays.filter(p => p.mode === 'no_charge').map(p => p.order_id)
+  );
+  const validInvoices = rawInvoices.filter(inv => !noChargeOrderIds.has(inv.order_id));
+  const validOrderIds = new Set(validInvoices.map(inv => inv.order_id));
+  
+  const validPays = rawPays.filter(p => p.mode !== 'no_charge');
+  const validItems = rawItems.filter(i => validOrderIds.has(i.order_id));
+
+  const gross = validInvoices.reduce((s, inv) => s + Number(inv.grand_total || 0), 0);
+  const orderCount = validInvoices.length;
+  const itemCount = validItems.reduce((s, i) => s + Number(i.quantity || 0), 0);
   const aov = orderCount ? gross / orderCount : 0;
-  const uniqueCust = new Set(orders.map(o => o.customer_id).filter(Boolean)).size;
-  const itemCost = items.reduce((s, i) => s + Number(i.quantity) * Number(i.cost_price || 0), 0);
+  
+  // Unique guests based on customer_id linked to invoices
+  const uniqueCust = new Set(validInvoices.map(inv => inv.customer_id || inv.orders?.customer_id).filter(Boolean)).size;
+  
+  const itemCost = validItems.reduce((s, i) => s + Number(i.quantity) * Number(i.cost_price || 0), 0);
   const grossProfit = gross - itemCost;
   const marginPct = gross > 0 ? (grossProfit / gross) * 100 : 0;
-  const totalTips = pays.reduce((s, p) => s + Number(p.tip_amount || 0), 0);
+  
+  const totalTips = validPays.reduce((s, p) => s + Number(p.tip_amount || 0), 0);
+  
   const byMode = {};
-  pays.forEach(p => { byMode[p.mode] = (byMode[p.mode] || 0) + Number(p.amount); });
+  validPays.forEach(p => { 
+    const modeTotal = Number(p.amount || 0) + Number(p.tip_amount || 0);
+    byMode[p.mode] = (byMode[p.mode] || 0) + modeTotal; 
+  });
+  
   const varianceTotal = shifts.filter(s => s.status === 'closed').reduce((s, x) => s + Number(x.cash_difference || 0), 0);
 
   const wrap = el('div', {});
@@ -158,36 +210,72 @@ async function renderOverview() {
   grid.appendChild(kpi('Gross Sales', fmtMoney(gross), 'from-indigo-500 to-indigo-600', `${orderCount} orders`));
   grid.appendChild(kpi('Avg Order', fmtMoney(aov), 'from-emerald-500 to-emerald-600', `${itemCount} items sold`));
   grid.appendChild(kpi('Gross Profit', fmtMoney(grossProfit), 'from-amber-500 to-orange-500', `${marginPct.toFixed(1)}% margin`));
-  grid.appendChild(kpi('Unique Guests', uniqueCust, 'from-pink-500 to-rose-500', totalTips > 0 ? 'Tips ' + fmtMoney(totalTips) : 'No tips'));
+  grid.appendChild(kpi('Tips Collected', fmtMoney(totalTips), 'from-purple-500 to-purple-600', `${uniqueCust} unique guests`));
+
+  const modesCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden flex-1' }, [
+    el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
+      el('h3', { class: 'font-semibold text-slate-800 text-sm' }, 'Payment Modes'),
+      el('span', { class: 'text-xs text-slate-500' }, `${validPays.length} transactions`),
+    ]),
+    el('div', { class: 'p-4 space-y-3' }, Object.entries(byMode).map(([mode, amt]) => {
+      const pct = gross > 0 ? (amt / (gross + totalTips)) * 100 : 0;
+      return el('div', { class: 'flex items-center justify-between text-sm' }, [
+        el('span', { class: 'w-20 font-medium text-slate-700 uppercase' }, mode),
+        el('div', { class: 'flex-1 mx-4 h-2 bg-slate-100 rounded-full overflow-hidden' }, [
+          el('div', { class: `h-full ${mode === 'cash' ? 'bg-emerald-500' : 'bg-indigo-500'}`, style: `width: ${pct}%` })
+        ]),
+        el('span', { class: 'text-slate-800 font-semibold w-20 text-right' }, fmtMoney(amt)),
+        el('span', { class: 'text-slate-400 text-xs w-12 text-right' }, `${pct.toFixed(0)}%`),
+      ]);
+    })),
+  ]);
+
+  const orderTypesCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden flex-1' }, [
+    el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
+      el('h3', { class: 'font-semibold text-slate-800 text-sm' }, 'Order Types'),
+    ]),
+    el('div', { class: 'p-4 space-y-3' }, Object.entries(validInvoices.reduce((acc, inv) => {
+        const type = inv.orders?.order_type || 'dine_in';
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+    }, {})).map(([type, count]) => {
+      const pct = orderCount > 0 ? (count / orderCount) * 100 : 0;
+      return el('div', { class: 'flex items-center justify-between text-sm' }, [
+        el('span', { class: 'w-24 font-medium text-slate-700 uppercase' }, type.replace('_', ' ')),
+        el('div', { class: 'flex-1 mx-4 h-2 bg-slate-100 rounded-full overflow-hidden' }, [
+          el('div', { class: 'h-full bg-orange-400', style: `width: ${pct}%` })
+        ]),
+        el('span', { class: 'text-slate-800 font-semibold w-8 text-right' }, count),
+        el('span', { class: 'text-slate-400 text-xs w-12 text-right' }, `${pct.toFixed(0)}%`),
+      ]);
+    })),
+  ]);
+
+  const cashCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-5 flex items-center justify-between mt-4' }, [
+    el('div', {}, [
+        el('h3', { class: 'font-semibold text-slate-800 text-sm mb-3' }, 'Cash Reconciliation'),
+        el('div', { class: 'flex gap-8' }, [
+            el('div', {}, [
+                el('div', { class: 'text-xs text-slate-500 uppercase' }, 'Shifts'),
+                el('div', { class: 'text-2xl font-bold text-slate-800' }, shifts.length)
+            ]),
+            el('div', {}, [
+                el('div', { class: 'text-xs text-slate-500 uppercase' }, 'Closed'),
+                el('div', { class: 'text-2xl font-bold text-slate-800' }, shifts.filter(s => s.status === 'closed').length)
+            ]),
+            el('div', {}, [
+                el('div', { class: 'text-xs text-slate-500 uppercase' }, 'Net Variance'),
+                el('div', { class: `text-2xl font-bold ${varianceTotal === 0 ? 'text-emerald-500' : 'text-red-500'}` }, fmtMoney(varianceTotal))
+            ])
+        ])
+    ]),
+    el('span', { class: 'px-3 py-1 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full uppercase tracking-wide' }, varianceTotal === 0 ? 'Balanced' : 'Variance')
+  ]);
+
   wrap.appendChild(grid);
+  wrap.appendChild(el('div', { class: 'flex flex-col md:flex-row gap-4' }, [modesCard, orderTypesCard]));
+  wrap.appendChild(cashCard);
 
-  wrap.appendChild(el('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-3' }, [
-    buildPaymentModes(byMode, pays.length),
-    buildOrderTypes(orders),
-  ]));
-
-  wrap.appendChild(el('div', { class: 'mt-3 bg-white rounded-xl border border-slate-200 p-5' }, [
-    el('div', { class: 'flex items-center justify-between mb-3' }, [
-      el('h3', { class: 'font-semibold text-slate-800' }, 'Cash Reconciliation'),
-      el('span', { class: `text-xs font-semibold px-2 py-0.5 rounded-full ${Math.abs(varianceTotal) < 1 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}` },
-        Math.abs(varianceTotal) < 1 ? 'Balanced' : 'Variance ' + fmtMoney(varianceTotal)),
-    ]),
-    el('div', { class: 'grid grid-cols-3 gap-4 text-sm' }, [
-      el('div', {}, [
-        el('div', { class: 'text-xs uppercase text-slate-500 font-semibold' }, 'Shifts'),
-        el('div', { class: 'text-2xl font-bold text-slate-800 mt-1' }, shifts.length),
-      ]),
-      el('div', {}, [
-        el('div', { class: 'text-xs uppercase text-slate-500 font-semibold' }, 'Closed'),
-        el('div', { class: 'text-2xl font-bold text-slate-800 mt-1' }, shifts.filter(s => s.status === 'closed').length),
-      ]),
-      el('div', {}, [
-        el('div', { class: 'text-xs uppercase text-slate-500 font-semibold' }, 'Net Variance'),
-        el('div', { class: `text-2xl font-bold mt-1 ${Math.abs(varianceTotal) < 1 ? 'text-emerald-600' : 'text-amber-600'}` },
-          (varianceTotal > 0 ? '+' : '') + fmtMoney(varianceTotal)),
-      ]),
-    ]),
-  ]));
   return wrap;
 }
 
@@ -543,112 +631,159 @@ async function renderUPI() {
   const tenantId = store.state.tenant?.id;
   if (!outletId || !tenantId) return wrapper;
 
-  // Date filters
-  let fromDate = new Date().toISOString().split('T')[0];
-  let toDate = new Date().toISOString().split('T')[0];
-  if (window.state && window.state.fromDate) fromDate = window.state.fromDate;
-  if (window.state && window.state.toDate) toDate = window.state.toDate;
+  let fromDate = state.startDate || new Date().toISOString().split('T')[0];
+  let toDate = state.endDate || new Date().toISOString().split('T')[0];
 
   try {
     // 1. Fetch Digital Sales (UPI/Card)
-    const { data: sales } = await supabase.from('payments')
-      .select('amount, tip_amount, mode, created_at')
+    const { data: payments } = await supabase.from('payments')
+      .select('amount, tip_amount, mode, paid_at')
       .eq('outlet_id', outletId)
-      .in('mode', ['upi', 'card', 'bank'])
+      .in('mode', ['upi', 'card'])
       .eq('status', 'success')
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
+      .gte('paid_at', fromDate + 'T00:00:00')
+      .lte('paid_at', toDate + 'T23:59:59');
 
-    // 2. Fetch Quick Purchases (the new table)
-    const { data: quickPurchases } = await supabase.from('purchases')
-      .select('*')
+    // 2. Fetch Digital Purchases (UPI/Card)
+    const { data: periodQuick } = await supabase.from('purchases')
+      .select('total, created_at')
       .eq('tenant_id', tenantId)
-      .in('payment_mode', ['upi', 'card', 'bank'])
+      .in('payment_mode', ['upi', 'card'])
       .gte('created_at', fromDate + 'T00:00:00')
       .lte('created_at', toDate + 'T23:59:59');
 
-    // 3. Fetch Supplier Payments (UPI/Card)
+    const { data: periodPOs } = await supabase.from('purchase_orders')
+      .select('grand_total, created_at, po_number')
+      .eq('tenant_id', tenantId)
+      .in('payment_mode', ['upi', 'card'])
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
+
+    // 3. Fetch Digital Supplier Payments (UPI/Card)
     const { data: supplierPays } = await supabase.from('supplier_payments')
       .select('*, suppliers(name)')
       .eq('tenant_id', tenantId)
-      .in('payment_mode', ['upi', 'card', 'bank'])
+      .in('payment_mode', ['upi', 'card'])
       .gte('created_at', fromDate + 'T00:00:00')
       .lte('created_at', toDate + 'T23:59:59');
 
-    // 4. Fetch Tip Payouts (UPI/Card)
+    // 4. Fetch Digital Tip Payouts (UPI/Card)
     const { data: tipPayouts } = await supabase.from('tip_payouts')
       .select('*')
       .eq('outlet_id', outletId)
-      .in('payment_mode', ['upi', 'card', 'bank'])
+      .in('payment_mode', ['upi', 'card'])
       .gte('created_at', fromDate + 'T00:00:00')
       .lte('created_at', toDate + 'T23:59:59');
 
-    // --- CALCULATIONS ---
-    let upiIn = 0, cardIn = 0, digitalTips = 0;
-    (sales || []).forEach(s => {
-      if (s.mode === 'upi') upiIn += Number(s.amount);
-      if (s.mode === 'card' || s.mode === 'bank') cardIn += Number(s.amount);
-      digitalTips += Number(s.tip_amount || 0);
-    });
-
-    let totalPurchasesOut = (quickPurchases || []).reduce((sum, p) => sum + Number(p.total), 0);
-    let totalSupplierPaysOut = (supplierPays || []).reduce((sum, p) => sum + Number(p.amount), 0);
-    let totalTipPayoutsOut = (tipPayouts || []).reduce((sum, p) => sum + Number(p.amount), 0);
-
-    const totalIn = upiIn + cardIn + digitalTips;
-    const totalOut = totalPurchasesOut + totalSupplierPaysOut + totalTipPayoutsOut;
-    const netBalance = totalIn - totalOut;
-
-    // --- UI GENERATION ---
-    const buildRows = (arr, isIn) => {
-      if (!arr.length) return '<tr><td colspan="3" class="text-center py-6 text-slate-400 text-sm">No entries found</td></tr>';
-      return arr.map(l => `
-        <tr class="border-b border-slate-100 hover:bg-slate-50">
-          <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(l.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-          <td class="px-4 py-3 text-sm text-slate-700">${l.desc}</td>
-          <td class="px-4 py-3 text-sm font-semibold text-right ${isIn ? 'text-emerald-600' : 'text-red-600'}">
-            ${isIn ? '+' : '-'}₹${l.amount.toFixed(2)}
-          </td>
-        </tr>
-      `).join('');
-    };
-
+    let totalSales = 0;
+    let totalTips = 0;
+    let totalOut = 0;
+    
     const ledgerIn = [];
     const ledgerOut = [];
 
-    (sales || []).forEach(s => ledgerIn.push({ date: s.created_at, desc: `Sales (${s.mode.toUpperCase()})`, amount: Number(s.amount) }));
-    (quickPurchases || []).forEach(p => ledgerOut.push({ date: p.created_at, desc: `Purchase - ${p.notes || 'Bill'}`, amount: Number(p.total) }));
-    (supplierPays || []).forEach(p => ledgerOut.push({ date: p.created_at, desc: `Supplier Payment - ${p.suppliers?.name || 'Supplier'}`, amount: Number(p.amount) }));
-    (tipPayouts || []).forEach(p => ledgerOut.push({ date: p.created_at, desc: `Tip Payout`, amount: Number(p.amount) }));
+    (payments || []).forEach(p => {
+      const amt = Number(p.amount || 0);
+      const tip = Number(p.tip_amount || 0);
+      
+      totalSales += amt;
+      totalTips += tip;
 
-    // Sort
-    ledgerIn.sort((a,b) => new Date(b.date) - new Date(a.date));
-    ledgerOut.sort((a,b) => new Date(b.date) - new Date(a.date));
+      if (amt > 0) {
+        ledgerIn.push({
+          time: p.paid_at,
+          desc: `Digital Sale (${p.mode.toUpperCase()})`,
+          amount: amt
+        });
+      }
+      if (tip > 0) {
+        ledgerIn.push({
+          time: p.paid_at,
+          desc: `Digital Tip (${p.mode.toUpperCase()})`,
+          amount: tip
+        });
+      }
+    });
+
+    (periodQuick || []).forEach(p => {
+        totalOut += Number(p.total || 0);
+        ledgerOut.push({ time: p.created_at, desc: 'Quick Purchase', amount: Number(p.total || 0) });
+    });
+    
+    (periodPOs || []).forEach(p => {
+        totalOut += Number(p.grand_total || 0);
+        ledgerOut.push({ time: p.created_at, desc: `PO: ${p.po_number || 'N/A'}`, amount: Number(p.grand_total || 0) });
+    });
+
+    (supplierPays || []).forEach(p => {
+      const amt = Number(p.amount);
+      totalOut += amt;
+      ledgerOut.push({
+        time: p.created_at,
+        desc: `Supplier Payment - ${p.suppliers?.name || 'Supplier'}`,
+        amount: amt
+      });
+    });
+
+    (tipPayouts || []).forEach(t => {
+      const amt = Number(t.amount);
+      totalOut += amt;
+      ledgerOut.push({
+        time: t.created_at,
+        desc: `Tip Payout (${t.staff_name || 'Staff'})`,
+        amount: amt
+      });
+    });
+
+    ledgerIn.sort((a,b) => new Date(b.time) - new Date(a.time));
+    ledgerOut.sort((a,b) => new Date(b.time) - new Date(a.time));
+
+    const totalIn = totalSales + totalTips;
+    const netBalance = totalIn - totalOut;
+
+    const buildRows = (arr, isIn) => {
+      if (!arr.length) return '<tr><td colspan="3" class="text-center py-6 text-slate-400 text-sm">No entries found</td></tr>';
+      return arr.map(l => {
+        const isTip = l.desc.includes('Tip');
+        const textColor = isTip ? 'text-purple-600' : (isIn ? 'text-emerald-600' : 'text-red-600');
+        return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50">
+          <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(l.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+          <td class="px-4 py-3 text-sm ${isTip ? 'text-purple-600 font-medium' : 'text-slate-700'}">${l.desc}</td>
+          <td class="px-4 py-3 text-sm font-semibold text-right ${textColor}">
+            ${isIn ? '+' : '-'}₹${l.amount.toFixed(2)}
+          </td>
+        </tr>
+      `}).join('');
+    };
 
     wrapper.innerHTML = `
       <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        
+        <!-- 4 KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 shadow-sm">
-            <div class="text-indigo-800 text-xs uppercase tracking-widest font-bold">Net UPI Balance</div>
+            <div class="text-indigo-800 text-xs uppercase tracking-widest font-bold">Net Digital Balance</div>
             <div class="text-3xl font-bold text-indigo-600 mt-1">₹${netBalance.toFixed(2)}</div>
           </div>
           <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-5 shadow-sm">
-            <div class="text-emerald-800 text-xs uppercase tracking-widest font-bold">Total In</div>
-            <div class="text-2xl font-bold text-emerald-600 mt-1">₹${totalIn.toFixed(2)}</div>
+            <div class="text-emerald-800 text-xs uppercase tracking-widest font-bold">Digital Sales</div>
+            <div class="text-3xl font-bold text-emerald-600 mt-1">₹${totalSales.toFixed(2)}</div>
+          </div>
+          <div class="bg-purple-50 border border-purple-200 rounded-xl p-5 shadow-sm">
+            <div class="text-purple-800 text-xs uppercase tracking-widest font-bold">Digital Tips</div>
+            <div class="text-3xl font-bold text-purple-600 mt-1">₹${totalTips.toFixed(2)}</div>
           </div>
           <div class="bg-red-50 border border-red-200 rounded-xl p-5 shadow-sm">
-            <div class="text-red-800 text-xs uppercase tracking-widest font-bold">Total Out</div>
-            <div class="text-2xl font-bold text-red-600 mt-1">₹${totalOut.toFixed(2)}</div>
-          </div>
-          <div class="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div class="text-slate-600 text-xs uppercase tracking-widest font-bold">Tips Collected</div>
-            <div class="text-2xl font-bold text-slate-800 mt-1">₹${digitalTips.toFixed(2)}</div>
+            <div class="text-red-800 text-xs uppercase tracking-widest font-bold">Total Out (Purchases)</div>
+            <div class="text-3xl font-bold text-red-600 mt-1">₹${totalOut.toFixed(2)}</div>
           </div>
         </div>
 
+        <!-- Ledgers -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money In (Sales)</h3></div>
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money In (Digital Sales & Tips)</h3></div>
             <table class="w-full">
               <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
                 <tr><th class="text-left px-4 py-2">Time</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr>
@@ -657,7 +792,7 @@ async function renderUPI() {
             </table>
           </div>
           <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money Out (Payments)</h3></div>
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200"><h3 class="font-bold text-slate-700 text-sm">Money Out (Purchases & Payments)</h3></div>
             <table class="w-full">
               <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-wide">
                 <tr><th class="text-left px-4 py-2">Time</th><th class="text-left px-4 py-2">Desc</th><th class="text-right px-4 py-2">Amount</th></tr>
@@ -676,300 +811,339 @@ async function renderUPI() {
 }
 
 async function renderCashbookDetailed() {
-  const outletId = store.state.outlet.id;
-  const tenantId = store.state.tenant.id;
-  const toISO = rangeEnd().toISOString();
-  const fromDate = rangeStart();
+  const wrapper = el('div', { class: 'w-full' });
+  wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Cashbook...</div>';
+  
+  const outletId = store.state.outlet?.id;
+  const tenantId = store.state.tenant?.id;
+  if (!outletId || !tenantId) return wrapper;
 
-  const [payments, purchases, supplierPays, tipPayouts, cashMovements] = await Promise.all([
-    supabase.from('payments').select('amount, tip_amount, mode, paid_at, orders(order_number)').eq('outlet_id', outletId).eq('status', 'success').lte('paid_at', toISO),
-    supabase.from('purchase_orders').select('grand_total, payment_mode, payment_status, created_at, po_number').eq('outlet_id', outletId).lte('created_at', toISO),
-    supabase.from('supplier_payments').select('amount, payment_mode, notes, created_at').eq('tenant_id', tenantId).lte('created_at', toISO),
-    supabase.from('tip_payouts').select('amount, payment_mode, staff_name, created_at').eq('outlet_id', outletId).lte('created_at', toISO),
-    supabase.from('cash_movements').select('amount, movement_type, reason, created_at').eq('outlet_id', outletId).lte('created_at', toISO)
-  ]);
+  let fromDate = state.startDate || new Date().toISOString().split('T')[0];
+  let toDate = state.endDate || new Date().toISOString().split('T')[0];
 
-  const records = [];
-  (payments.data || []).forEach(p => records.push({
-    date: p.paid_at, type: 'Bill Payment', reference: p.orders?.order_number || 'Walk-in', mode: p.mode,
-    amount: Number(p.amount), tip: Number(p.tip_amount || 0), in: Number(p.amount) + Number(p.tip_amount || 0), out: 0
-  }));
-  (purchases.data || []).forEach(p => {
-    if (p.payment_status === 'paid') records.push({
-      date: p.created_at, type: 'Supplier Purchase', reference: p.po_number, mode: p.payment_mode || 'cash', in: 0, out: Number(p.grand_total), amount: 0, tip: 0
+  try {
+    // Fetch Sales (In)
+    const { data: payments } = await supabase.from('payments')
+      .select('amount, tip_amount, mode, paid_at')
+      .eq('outlet_id', outletId)
+      .gte('paid_at', fromDate + 'T00:00:00')
+      .lte('paid_at', toDate + 'T23:59:59')
+      .eq('status', 'success')
+      .in('mode', ['cash', 'upi']);
+
+    // Fetch Supplier Payments (Out)
+    const { data: supplierPays } = await supabase.from('supplier_payments')
+      .select('*, suppliers(name)')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .in('payment_mode', ['cash', 'upi']);
+
+    // Fetch Cash Movements (Drawer)
+    const { data: cashMovements } = await supabase.from('cash_movements')
+      .select('*')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
+
+    // Fetch Tip Payouts (Out) - This is the missing piece!
+    const { data: tipPayouts } = await supabase.from('tip_payouts')
+      .select('*')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
+
+    let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
+    const ledger = [];
+    const personMap = new Map();
+
+    // 1. Process Sales
+    (payments || []).forEach(p => {
+      const amt = Number(p.amount || 0);
+      const tip = Number(p.tip_amount || 0);
+      if (p.mode === 'cash') cashIn += (amt + tip);
+      if (p.mode === 'upi') upiIn += (amt + tip);
+      
+      if (amt > 0) ledger.push({ time: p.paid_at, type: 'sales', desc: `Bill Payment`, mode: p.mode, in: amt, out: 0 });
+      if (tip > 0) ledger.push({ time: p.paid_at, type: 'tip', desc: `Tip Collected`, mode: p.mode, in: tip, out: 0 });
     });
-  });
-  (supplierPays.data || []).forEach(p => records.push({
-    date: p.created_at, type: 'Supplier Payment', reference: p.notes || '', mode: p.payment_mode, in: 0, out: Number(p.amount), amount: 0, tip: 0
-  }));
-  (tipPayouts.data || []).forEach(p => records.push({
-    date: p.created_at, type: 'Tip Payout', reference: p.staff_name, mode: p.payment_mode, in: 0, out: Number(p.amount), amount: 0, tip: 0
-  }));
-  (cashMovements.data || []).forEach(m => {
-    if (m.movement_type === 'tip_payout') return; // Handled by tipPayouts
-    records.push({
-      date: m.created_at, type: m.movement_type === 'cash_in' ? 'Cash In' : 'Cash Out', reference: m.reason || '', mode: 'cash',
-      in: m.movement_type === 'cash_in' ? Number(m.amount) : 0, out: m.movement_type !== 'cash_in' ? Number(m.amount) : 0, amount: 0, tip: 0
+
+    // 2. Process Supplier Payments
+    (supplierPays || []).forEach(p => {
+      const amt = Number(p.amount);
+      if (p.payment_mode === 'cash') cashOut += amt;
+      if (p.payment_mode === 'upi') upiOut += amt;
+      ledger.push({ time: p.created_at, type: 'payment', desc: `Supplier Payment - ${p.suppliers?.name || 'Supplier'}`, mode: p.payment_mode, in: 0, out: amt });
     });
-  });
 
-  let openIn = 0, openOut = 0, periodIn = 0, periodOut = 0;
-  let openCashIn=0, openCashOut=0, openUpiIn=0, openUpiOut=0, openCardIn=0, openCardOut=0;
-  let periodCashIn=0, periodCashOut=0, periodUpiIn=0, periodUpiOut=0, periodCardIn=0, periodCardOut=0;
-  let periodUpiBill = 0, periodUpiTips = 0, periodCashBill = 0, periodCashTips = 0;
-  let billPaymentsTotal = 0, tipsInTotal = 0, supplierPaymentsTotal = 0, tipsOutTotal = 0, otherExpensesTotal = 0;
+    // 3. Process Cash Movements (Drawer Withdrawals/Deposits)
+    const validCashMovements = (cashMovements || []).filter(m => {
+        const typeStr = (m.movement_type || '').toLowerCase();
+        // Skip supplier and tip_payout here, because we handle them above
+        if (typeStr.includes('tip_payout')) return false; 
+        const isSupplier = (m.person_name && m.person_name.toLowerCase() === 'supplier') ||
+                           (m.reason && (m.reason.toLowerCase().includes('supplier') || m.reason.toLowerCase().includes('purchase po')));
+        return !isSupplier;
+    });
 
-  records.forEach(r => {
-    const isBefore = new Date(r.date) < fromDate;
-    const mode = r.mode?.toLowerCase() || 'cash';
+    validCashMovements.forEach(p => {
+      const amt = Number(p.amount || 0);
+      const typeStr = (p.movement_type || '').toLowerCase();
+      const isIn = typeStr.includes('in') || typeStr.includes('deposit');
+      const isOut = typeStr.includes('out') || typeStr.includes('withdraw');
+      
+      if (isIn) cashIn += amt;
+      if (isOut) cashOut += amt;
 
-    if (isBefore) {
-      openIn += r.in; openOut += r.out;
-      if (mode === 'cash') { openCashIn += r.in; openCashOut += r.out; }
-      if (mode === 'upi') { openUpiIn += r.in; openUpiOut += r.out; }
-      if (mode === 'card') { openCardIn += r.in; openCardOut += r.out; }
-    } else {
-      periodIn += r.in; periodOut += r.out;
-      if (mode === 'cash') { periodCashIn += r.in; periodCashOut += r.out; }
-      if (mode === 'upi') { periodUpiIn += r.in; periodUpiOut += r.out; }
-      if (mode === 'card') { periodCardIn += r.in; periodCardOut += r.out; }
-
-      if (r.type === 'Bill Payment') {
-        billPaymentsTotal += r.amount; tipsInTotal += r.tip;
-        if (mode === 'upi') { periodUpiBill += r.amount; periodUpiTips += r.tip; }
-        if (mode === 'cash') { periodCashBill += r.amount; periodCashTips += r.tip; }
+      if (p.person_name) {
+        if (isOut) personMap.set(p.person_name, (personMap.get(p.person_name) || 0) + amt);
+        else if (isIn) personMap.set(p.person_name, (personMap.get(p.person_name) || 0) - amt);
       }
-      if (r.type === 'Supplier Purchase' || r.type === 'Supplier Payment') supplierPaymentsTotal += r.out;
-      if (r.type === 'Tip Payout') tipsOutTotal += r.out;
-      if (r.type === 'Cash In' || r.type === 'Cash Out') otherExpensesTotal += r.out;
+      
+      let desc = `Drawer ${isIn ? 'Deposit' : 'Withdrawal'}`;
+      if (p.person_name) desc += ` (${p.person_name})`;
+      if (p.reason && p.reason !== p.person_name) desc += ` - ${p.reason}`;
+
+      ledger.push({ time: p.created_at, type: 'drawer', desc: desc, mode: 'cash', in: isIn ? amt : 0, out: isOut ? amt : 0 });
+    });
+
+    // 4. Process Tip Payouts
+    (tipPayouts || []).forEach(t => {
+      const amt = Number(t.amount || 0);
+      if (t.payment_mode === 'cash') cashOut += amt;
+      if (t.payment_mode === 'upi') upiOut += amt;
+      
+      ledger.push({ 
+        time: t.created_at, 
+        type: 'tip_payout', 
+        desc: `Tip Payout to ${t.staff_name || 'Staff'}`, 
+        mode: t.payment_mode, 
+        in: 0, 
+        out: amt 
+      });
+    });
+
+    ledger.sort((a, b) => new Date(a.time) - new Date(b.time));
+    
+    let rowsHtml = '';
+    if (ledger.length === 0) {
+      rowsHtml = '<tr><td colspan="6" class="text-center py-8 text-slate-400 text-sm">No transactions</td></tr>';
+    } else {
+      rowsHtml = ledger.map(l => {
+        const inStr = l.in > 0 ? `+₹${l.in.toFixed(2)}` : (l.in === 0 ? '₹0.00' : '-');
+        const outStr = l.out > 0 ? `-₹${l.out.toFixed(2)}` : (l.out === 0 ? '₹0.00' : '-');
+        const modeClass = l.mode.toLowerCase() === 'cash' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700';
+        return `
+          <tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(l.time).toLocaleString('en-GB', {dateStyle:'short', timeStyle:'short'})}</td>
+            <td class="px-4 py-3 text-sm text-slate-700 capitalize">${l.type.replace('_', ' ')}</td>
+            <td class="px-4 py-3 text-sm text-slate-600">${l.desc}</td>
+            <td class="px-4 py-3"><span class="px-2 py-1 rounded text-[10px] font-bold ${modeClass}">${l.mode.toUpperCase()}</span></td>
+            <td class="px-4 py-3 text-sm text-right text-emerald-600 font-medium">${inStr}</td>
+            <td class="px-4 py-3 text-sm text-right text-red-600 font-medium">${outStr}</td>
+          </tr>
+        `;
+      }).join('');
     }
-  });
 
-  const wrap = el('div', { class: 'max-w-5xl mx-auto space-y-6' });
+    let personRowsHtml = '';
+    personMap.forEach((balance, name) => {
+      if (balance > 0) {
+        personRowsHtml += `
+          <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition person-row" data-person="${name}">
+            <td class="px-4 py-3 font-bold text-indigo-600 underline">${name}</td>
+            <td class="px-4 py-3 text-right font-bold text-indigo-600">₹${balance.toFixed(2)}</td>
+          </tr>
+        `;
+      }
+    });
+    if (!personRowsHtml) {
+      personRowsHtml = '<tr><td colspan="2" class="text-center py-4 text-slate-400 text-sm">No cash currently held by staff</td></tr>';
+    }
 
-  wrap.appendChild(el('h2', { class: 'text-lg font-bold text-slate-800' }, 'Opening balance (before this period, by mode below)'));
-  const openTable = el('table', { class: 'w-full text-sm bg-white rounded-lg border border-slate-200 overflow-hidden' });
-  openTable.appendChild(el('tbody', {}, [
-    el('tr', { class: 'border-b border-slate-100' }, [
-      el('td', { class: 'px-4 py-2 text-slate-600' }, 'Opening — money in (all modes)'),
-      el('td', { class: 'px-4 py-2 text-right font-medium text-emerald-600' }, fmtMoney(openIn))
-    ]),
-    el('tr', { class: 'border-b border-slate-100' }, [
-      el('td', { class: 'px-4 py-2 text-slate-600' }, 'Opening — money out (all modes)'),
-      el('td', { class: 'px-4 py-2 text-right font-medium text-red-600' }, fmtMoney(openOut))
-    ]),
-    el('tr', { class: 'bg-slate-50 font-bold' }, [
-      el('td', { class: 'px-4 py-2 text-slate-800' }, 'Opening — net (in — out)'),
-      el('td', { class: 'px-4 py-2 text-right text-slate-800' }, fmtMoney(openIn - openOut))
-    ])
-  ]));
-  wrap.appendChild(openTable);
+    wrapper.innerHTML = `
+      <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
+        
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+            <h3 class="font-bold text-slate-800 text-sm">Cash & UPI Ledger</h3>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
+              <tr>
+                <th class="text-left px-4 py-3 font-semibold">When</th>
+                <th class="text-left px-4 py-3 font-semibold">Type</th>
+                <th class="text-left px-4 py-3 font-semibold">Reference</th>
+                <th class="text-center px-4 py-3 font-semibold">Mode</th>
+                <th class="text-right px-4 py-3 font-semibold">In (₹)</th>
+                <th class="text-right px-4 py-3 font-semibold">Out (₹)</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
 
-  const ioGrid = el('div', { class: 'grid grid-cols-2 gap-4' });
-  const inCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
-  inCard.appendChild(el('div', { class: 'px-4 py-2 bg-slate-50 border-b border-slate-200 font-bold text-emerald-600' }, '↓ Money in'));
-  const inTbody = el('tbody');
-  inTbody.appendChild(ioRow('Bill payments (non-deleted bills)', billPaymentsTotal));
-  inTbody.appendChild(ioRow('Tips', tipsInTotal));
-  inTbody.appendChild(ioRow('Total in', periodIn, true));
-  inCard.appendChild(el('table', { class: 'w-full text-sm' }, [inTbody]));
-  ioGrid.appendChild(inCard);
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+            <h3 class="font-bold text-slate-800 text-sm">Summary by payment mode</h3>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
+              <tr>
+                <th class="text-left px-4 py-3 font-semibold">Mode</th>
+                <th class="text-right px-4 py-3 font-semibold">Total In</th>
+                <th class="text-right px-4 py-3 font-semibold">Total Out</th>
+                <th class="text-right px-4 py-3 font-semibold">Net Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-slate-100">
+                <td class="px-4 py-3 font-bold text-slate-700">Cash</td>
+                <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${cashIn.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right text-red-600 font-medium">₹${cashOut.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(cashIn - cashOut).toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 font-bold text-slate-700">UPI</td>
+                <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${upiIn.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right text-red-600 font-medium">₹${upiOut.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(upiIn - upiOut).toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-  const outCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
-  outCard.appendChild(el('div', { class: 'px-4 py-2 bg-slate-50 border-b border-slate-200 font-bold text-red-600' }, '↑ Money out'));
-  const outTbody = el('tbody');
-  outTbody.appendChild(ioRow('Expense payments', otherExpensesTotal));
-  outTbody.appendChild(ioRow('Supplier payments', supplierPaymentsTotal));
-  outTbody.appendChild(ioRow('Tips payments', tipsOutTotal));
-  outTbody.appendChild(ioRow('Total out', periodOut, true));
-  outCard.appendChild(el('table', { class: 'w-full text-sm' }, [outTbody]));
-  ioGrid.appendChild(outCard);
-  wrap.appendChild(ioGrid);
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 bg-indigo-50 border-b border-indigo-100">
+            <h3 class="font-bold text-indigo-800 text-sm">Cash Held by Person (Drawer Withdrawals)</h3>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
+              <tr>
+                <th class="text-left px-4 py-3 font-semibold">Person Name</th>
+                <th class="text-right px-4 py-3 font-semibold">Amount Held</th>
+              </tr>
+            </thead>
+            <tbody>${personRowsHtml}</tbody>
+          </table>
+        </div>
 
-  const netTable = el('table', { class: 'w-full text-sm bg-white rounded-lg border border-slate-200 overflow-hidden' });
-  netTable.appendChild(el('tbody', {}, [
-    el('tr', { class: 'border-b border-slate-100' }, [
-      el('td', { class: 'px-4 py-2 text-slate-600' }, 'Period net (money in — money out)'),
-      el('td', { class: 'px-4 py-2 text-right font-medium text-slate-800' }, fmtMoney(periodIn - periodOut))
-    ]),
-    el('tr', { class: 'bg-slate-50 font-bold' }, [
-      el('td', { class: 'px-4 py-2 text-slate-800' }, 'Closing net (opening + period)'),
-      el('td', { class: 'px-4 py-2 text-right text-slate-800' }, fmtMoney((openIn - openOut) + (periodIn - periodOut)))
-    ])
-  ]));
-  wrap.appendChild(netTable);
+      </div>
+    `;
 
-  wrap.appendChild(el('h2', { class: 'text-lg font-bold text-slate-800 mt-6' }, 'UPI and Cash snapshot'));
-  const snapTable = el('table', { class: 'w-full text-sm bg-white rounded-lg border border-slate-200 overflow-hidden' });
-  snapTable.appendChild(el('tbody', {}, [
-    ioRow('UPI Bill payment', periodUpiBill),
-    ioRow('UPI TIPS', periodUpiTips),
-    ioRow('CASH Bill Payment', periodCashBill),
-    ioRow('CASH Tips', periodCashTips)
-  ]));
-  wrap.appendChild(snapTable);
+    wrapper.querySelectorAll('.person-row').forEach(row => {
+      row.onclick = () => {
+        const pName = row.getAttribute('data-person');
+        const pMovements = validCashMovements.filter(m => m.person_name === pName);
+        openPersonLedgerModal(pName, pMovements);
+      };
+    });
 
-  wrap.appendChild(el('h2', { class: 'text-lg font-bold text-slate-800 mt-6' }, 'Ledger (all transactions in period, oldest first; balance includes opening net)'));
-  const lTable = el('table', { class: 'w-full text-sm bg-white rounded-lg border border-slate-200 overflow-hidden' });
-  lTable.appendChild(el('thead', { class: 'bg-slate-50 text-[10px] uppercase text-slate-500' }, [
-    el('tr', {}, [
-      el('th', { class: 'text-left px-4 py-2' }, 'When'),
-      el('th', { class: 'text-left px-4 py-2' }, 'Type'),
-      el('th', { class: 'text-left px-4 py-2' }, 'Reference'),
-      el('th', { class: 'text-center px-4 py-2' }, 'Mode'),
-      el('th', { class: 'text-right px-4 py-2 text-emerald-600' }, 'In (₹)'),
-      el('th', { class: 'text-right px-4 py-2 text-red-600' }, 'Out (₹)'),
-      el('th', { class: 'text-right px-4 py-2' }, 'Balance (₹)')
-    ])
-  ]));
-  const periodRecords = records.filter(r => new Date(r.date) >= fromDate).sort((a,b) => new Date(a.date) - new Date(b.date));
-  let runningBal = openIn - openOut;
-  const lTbody = el('tbody');
-  periodRecords.forEach(r => {
-    runningBal += (r.in - r.out);
-    lTbody.appendChild(el('tr', { class: 'border-t border-slate-100' }, [
-      el('td', { class: 'px-4 py-2 text-xs text-slate-500 whitespace-nowrap' }, new Date(r.date).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })),
-      el('td', { class: 'px-4 py-2' }, r.type),
-      el('td', { class: 'px-4 py-2 text-xs' }, r.reference),
-      el('td', { class: 'px-4 py-2 text-center text-[10px] uppercase font-bold' }, [
-        el('span', { class: `px-1.5 py-0.5 rounded ${r.mode==='cash'?'bg-emerald-100 text-emerald-700':r.mode==='upi'?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}` }, r.mode)
-      ]),
-      el('td', { class: 'px-4 py-2 text-right text-emerald-600' }, r.in > 0 ? fmtMoney(r.in) : ''),
-      el('td', { class: 'px-4 py-2 text-right text-red-600' }, r.out > 0 ? fmtMoney(r.out) : ''),
-      el('td', { class: 'px-4 py-2 text-right font-medium' }, fmtMoney(runningBal))
-    ]));
-  });
-  if (!periodRecords.length) {
-    lTbody.appendChild(el('tr', {}, [el('td', { colspan: 7, class: 'text-center py-4 text-slate-400' }, 'No transactions in this range.')]));
+  } catch (err) {
+    console.error(err);
+    wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
   }
-  lTable.appendChild(lTbody);
-  wrap.appendChild(lTable);
-
-  wrap.appendChild(el('h2', { class: 'text-lg font-bold text-slate-800 mt-6' }, 'Summary by payment mode'));
-  const sumTable = el('table', { class: 'w-full text-sm bg-white rounded-lg border border-slate-200 overflow-hidden' });
-  sumTable.appendChild(el('thead', { class: 'bg-slate-50 text-[10px] text-slate-500' }, [
-    el('tr', {}, [
-      el('th', { rowspan: 2, class: 'text-left px-4 py-2 border-r' }, 'Mode'),
-      el('th', { colspan: 3, class: 'text-center py-1 border-r border-b' }, 'Opening (before period)'),
-      el('th', { colspan: 3, class: 'text-center py-1 border-r border-b' }, 'This period'),
-      el('th', { rowspan: 2, class: 'text-right px-4 py-2' }, 'Closing net'),
-    ]),
-    el('tr', {}, [
-      el('th', { class: 'text-right px-2 py-1 text-emerald-600 border-r' }, 'In'),
-      el('th', { class: 'text-right px-2 py-1 text-red-600 border-r' }, 'Out'),
-      el('th', { class: 'text-right px-2 py-1 border-r' }, 'Net'),
-      el('th', { class: 'text-right px-2 py-1 text-emerald-600 border-r' }, 'In'),
-      el('th', { class: 'text-right px-2 py-1 text-red-600 border-r' }, 'Out'),
-      el('th', { class: 'text-right px-2 py-1 border-r' }, 'Net'),
-    ])
-  ]));
-  const sumTbody = el('tbody');
-  const modes = ['card', 'cash', 'upi'];
-  modes.forEach(m => {
-    let oIn=0, oOut=0, pIn=0, pOut=0;
-    if (m==='cash') { oIn=openCashIn; oOut=openCashOut; pIn=periodCashIn; pOut=periodCashOut; }
-    if (m==='upi') { oIn=openUpiIn; oOut=openUpiOut; pIn=periodUpiIn; pOut=periodUpiOut; }
-    if (m==='card') { oIn=openCardIn; oOut=openCardOut; pIn=periodCardIn; pOut=periodCardOut; }
-    const oNet = oIn - oOut;
-    const pNet = pIn - pOut;
-    sumTbody.appendChild(el('tr', { class: 'border-t border-slate-100' }, [
-      el('td', { class: 'px-4 py-2 font-bold border-r' }, m),
-      el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(oIn)),
-      el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(oOut)),
-      el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(oNet)),
-      el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(pIn)),
-      el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(pOut)),
-      el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(pNet)),
-      el('td', { class: 'px-4 py-2 text-right font-bold' }, fmtMoney(oNet + pNet))
-    ]));
-  });
-  sumTbody.appendChild(el('tr', { class: 'border-t border-slate-200 bg-slate-50 font-bold' }, [
-    el('td', { class: 'px-4 py-2 border-r' }, 'Total'),
-    el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(openIn)),
-    el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(openOut)),
-    el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(openIn - openOut)),
-    el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(periodIn)),
-    el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(periodOut)),
-    el('td', { class: 'px-2 py-2 text-right border-r' }, fmtMoney(periodIn - periodOut)),
-    el('td', { class: 'px-4 py-2 text-right' }, fmtMoney((openIn - openOut) + (periodIn - periodOut)))
-  ]));
-  sumTable.appendChild(sumTbody);
-  wrap.appendChild(sumTable);
-
-  return wrap;
+  return wrapper;
 }
 
 async function renderVoidedItems() {
-  const outletId = store.state.outlet.id;
-  const from = rangeStart().toISOString();
-  const to = rangeEnd().toISOString();
-
-  const { data, error } = await supabase.from('v_voided_items')
-    .select('*')
-    .eq('outlet_id', outletId)
-    .gte('cancelled_at', from)
-    .lte('cancelled_at', to)
-    .order('cancelled_at', { ascending: false });
-
-  const wrap = el('div', {});
+  const wrapper = el('div', { class: 'w-full' });
+  wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Voided Items...</div>';
   
-  if (error) {
-    wrap.appendChild(el('div', { class: 'p-6 text-red-600 font-mono text-sm' }, 'Database Error: ' + error.message));
-    return wrap;
+  const outletId = store.state.outlet?.id;
+  if (!outletId) return wrapper;
+
+  let fromDate = state.startDate || new Date().toISOString().split('T')[0];
+  let toDate = state.endDate || new Date().toISOString().split('T')[0];
+
+  try {
+    // Fetch KOTs and their items, then filter for cancelled items in JS
+    const { data: kots, error } = await supabase.from('kots')
+      .select('*, orders(order_number, table_name_snapshot), kot_items(*)')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Flatten and filter for cancelled items
+    const voidedItems = [];
+    (kots || []).forEach(k => {
+        (k.kot_items || []).filter(it => it.status === 'cancelled' || it.status === 'void').forEach(it => {
+            voidedItems.push({
+                ...it,
+                order_number: k.orders?.order_number,
+                table_name: k.orders?.table_name_snapshot,
+                kot_time: k.created_at,
+                // Since we don't have the price in kot_items, we show 0 or fetch it. 
+                // For now, we'll use a placeholder if price is not available.
+                price: Number(it.unit_price || 0) 
+            });
+        });
+    });
+
+    const totalCount = voidedItems.length;
+    const totalValue = voidedItems.reduce((sum, item) => sum + (Number(item.quantity) * item.price), 0);
+
+    wrapper.innerHTML = `
+      <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
+        
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-red-50 border border-red-200 rounded-xl p-5 shadow-sm">
+            <div class="text-red-800 text-xs uppercase tracking-widest font-bold">Voided Items</div>
+            <div class="text-3xl font-bold text-red-600 mt-1">${totalCount}</div>
+            <div class="text-xs text-red-700 mt-1">Total count</div>
+          </div>
+          <div class="bg-slate-900 rounded-xl p-5 shadow-sm">
+            <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Value Removed</div>
+            <div class="text-3xl font-bold text-white mt-1">₹${totalValue.toFixed(2)}</div>
+            <div class="text-xs text-slate-500 mt-1">Before taxes</div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+            <h3 class="font-bold text-slate-800 text-sm">Voided KOT Items</h3>
+            <span class="text-xs text-slate-500">Items removed after being sent to kitchen</span>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
+              <tr>
+                <th class="text-left px-5 py-3 font-semibold">Time</th>
+                <th class="text-left px-5 py-3 font-semibold">Order</th>
+                <th class="text-left px-5 py-3 font-semibold">Item</th>
+                <th class="text-center px-5 py-3 font-semibold">Qty</th>
+                <th class="text-left px-5 py-3 font-semibold">Reason</th>
+                <th class="text-left px-5 py-3 font-semibold">Voided By</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${voidedItems.length ? voidedItems.map(item => `
+                <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+                  <td class="px-5 py-4 text-xs text-slate-500 whitespace-nowrap">${new Date(item.kot_time).toLocaleString('en-GB', {dateStyle:'short', timeStyle:'short'})}</td>
+                  <td class="px-5 py-4 text-sm text-slate-800 font-semibold">
+                    #${item.order_number || 'N/A'}<br>
+                    <span class="text-xs text-slate-500 font-normal">${item.table_name || 'Take-away'}</span>
+                  </td>
+                  <td class="px-5 py-4 text-sm text-slate-700">${item.name_snapshot}</td>
+                  <td class="px-5 py-4 text-sm text-slate-800 text-center font-bold">${item.quantity}</td>
+                  <td class="px-5 py-4 text-sm text-red-600 font-medium">${item.notes || 'No reason provided'}</td>
+                  <td class="px-5 py-4 text-sm text-slate-500">Owner</td>
+                </tr>
+              `).join('') : '<tr><td colspan="6" class="text-center py-10 text-slate-400 font-medium">No voided items in this period.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error(err);
+    wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading Voided Items: ${err.message}</div>`;
   }
-
-  const totalLost = (data || []).reduce((s, item) => s + Number(item.line_total || 0), 0);
-
-  const summary = el('div', { class: 'grid grid-cols-2 md:grid-cols-3 gap-3 mb-3' });
-  summary.appendChild(kpi('Voided Items', String(data?.length || 0), 'from-red-500 to-red-600', 'Total count'));
-  summary.appendChild(kpi('Value Removed', fmtMoney(totalLost), 'from-slate-600 to-slate-700', 'Before taxes'));
-  wrap.appendChild(summary);
-
-  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
-  card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
-    el('h3', { class: 'font-semibold text-slate-800 text-sm' }, 'Voided KOT Items'),
-    el('span', { class: 'text-xs text-slate-500' }, 'Items removed after being sent to kitchen'),
-  ]));
-
-  if (!data?.length) {
-    card.appendChild(el('div', { class: 'p-8 text-center text-slate-400 text-sm' }, 'No items were voided in this period'));
-    wrap.appendChild(card);
-    return wrap;
-  }
-
-  const tbody = el('tbody');
-  data.forEach(item => {
-    tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
-      el('td', { class: 'px-4 py-2 text-xs text-slate-500 whitespace-nowrap' }, new Date(item.cancelled_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })),
-      el('td', { class: 'px-4 py-2' }, [
-        el('div', { class: 'font-mono text-xs font-semibold text-slate-700' }, `#${item.order_number}`),
-        el('div', { class: 'text-xs text-slate-500' }, item.table_name_snapshot || 'Takeaway'),
-      ]),
-      el('td', { class: 'px-4 py-2 text-sm text-slate-800' }, item.item_name + (item.variant_name ? ` (${item.variant_name})` : '')),
-      el('td', { class: 'px-4 py-2 text-center text-sm text-slate-600' }, String(item.quantity)),
-      el('td', { class: 'px-4 py-2 text-right text-sm font-semibold text-slate-800' }, fmtMoney(item.line_total)),
-      el('td', { class: 'px-4 py-2 text-xs text-red-600 font-medium' }, item.cancel_reason || '—'),
-      el('td', { class: 'px-4 py-2 text-xs text-slate-500' }, item.cancelled_by_name || '—'),
-    ]));
-  });
-
-  card.appendChild(el('table', { class: 'w-full' }, [
-    el('thead', { class: 'bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide' }, [
-      el('tr', {}, [
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Time'),
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Order'),
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Item'),
-        el('th', { class: 'text-center px-4 py-2.5 font-semibold' }, 'Qty'),
-        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Value'),
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Reason'),
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Voided By'),
-      ]),
-    ]),
-    tbody,
-  ]));
-
-  wrap.appendChild(card);
-  return wrap;
+  return wrapper;
 }
 
 async function renderBills() {
@@ -1216,92 +1390,197 @@ async function renderProfitBook() {
   const tenantId = store.state.tenant?.id;
   if (!outletId || !tenantId) return wrapper;
 
-  let fromDate = new Date().toISOString().split('T')[0];
-  let toDate = new Date().toISOString().split('T')[0];
-  if (window.state && window.state.fromDate) fromDate = window.state.fromDate;
-  if (window.state && window.state.toDate) toDate = window.state.toDate;
+  let fromDate = state.startDate || new Date().toISOString().split('T')[0];
+  let toDate = state.endDate || new Date().toISOString().split('T')[0];
 
   try {
-    const { data: invoices } = await supabase.from('invoices').select('grand_total').eq('outlet_id', outletId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59');
-    const { data: periodPurchases } = await supabase.from('purchases').select('total').eq('tenant_id', tenantId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59');
-    const { data: suppliers } = await supabase.from('suppliers').select('id, name').eq('tenant_id', tenantId);
-    const { data: allPurchases } = await supabase.from('purchases').select('supplier_id, total, payment_mode').eq('tenant_id', tenantId);
-    const { data: allPayments } = await supabase.from('supplier_payments').select('supplier_id, amount').eq('tenant_id', tenantId);
+    // 1. Fetch Invoices (Detailed for Bill Table)
+    const { data: invoices } = await supabase.from('invoices')
+      .select('id, invoice_number, grand_total, created_at, payments(mode)')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59')
+      .order('created_at', { ascending: false });
 
-    const totalRevenue = (invoices || []).reduce((sum, inv) => sum + Number(inv.grand_total || 0), 0);
-    const totalPurchases = (periodPurchases || []).reduce((sum, p) => sum + Number(p.total || 0), 0);
-    const grossProfit = totalRevenue - totalPurchases;
+    // 2. Fetch Tips Collected (Detailed)
+    const { data: tipsInData } = await supabase.from('payments')
+      .select('id, tip_amount, mode, paid_at, reference_no, orders(order_number)')
+      .eq('outlet_id', outletId)
+      .eq('status', 'success')
+      .gt('tip_amount', 0)
+      .gte('paid_at', fromDate + 'T00:00:00')
+      .lte('paid_at', toDate + 'T23:59:59');
 
-    const supplierMap = new Map();
-    (suppliers || []).forEach(s => supplierMap.set(s.id, { name: s.name, credit: 0, paid: 0 }));
+    // 3. Fetch Tips Paid Out (Detailed)
+    const { data: tipsOut } = await supabase.from('tip_payouts')
+      .select('*')
+      .eq('outlet_id', outletId)
+      .gte('created_at', fromDate + 'T00:00:00')
+      .lte('created_at', toDate + 'T23:59:59');
 
-    (allPurchases || []).forEach(p => {
-      if (p.payment_mode === 'credit' && supplierMap.has(p.supplier_id)) supplierMap.get(p.supplier_id).credit += Number(p.total);
-    });
-    (allPayments || []).forEach(p => {
-      if (supplierMap.has(p.supplier_id)) supplierMap.get(p.supplier_id).paid += Number(p.amount);
-    });
+    // 4. Fetch Purchases
+    const { data: periodQuick } = await supabase.from('purchases').select('*, suppliers(name)').eq('tenant_id', tenantId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59');
+    const { data: periodPOs } = await supabase.from('purchase_orders').select('*, suppliers(name)').eq('tenant_id', tenantId).gte('created_at', fromDate + 'T00:00:00').lte('created_at', toDate + 'T23:59:59');
 
-    let totalOutstanding = 0;
-    const outstandingList = [];
-    supplierMap.forEach((val, id) => {
-      const balance = val.credit - val.paid;
-      if (balance > 0) {
-        totalOutstanding += balance;
-        outstandingList.push({ name: val.name, credit: val.credit, paid: val.paid, balance });
-      }
-    });
-    outstandingList.sort((a, b) => b.balance - a.balance);
+    const noChargeOrderIds = new Set(
+      (invoices || []).flatMap(inv => 
+        (inv.payments || []).filter(p => p.mode === 'no_charge').map(p => inv.id)
+      )
+    );
+    const validInvoices = (invoices || []).filter(inv => !noChargeOrderIds.has(inv.id));
+    
+    const totalFoodRevenue = validInvoices.reduce((sum, inv) => sum + Number(inv.grand_total || 0), 0);
+    const totalTipsIn = (tipsInData || []).reduce((sum, p) => sum + Number(p.tip_amount || 0), 0);
+    const totalTipsOut = (tipsOut || []).reduce((sum, t) => sum + Number(t.amount || 0), 0);
+    
+    const totalRevenue = totalFoodRevenue + totalTipsIn;
+    
+    const totalQuick = (periodQuick || []).reduce((sum, p) => sum + Number(p.total || 0), 0);
+    const totalPOs = (periodPOs || []).reduce((sum, p) => sum + Number(p.grand_total || 0), 0);
+    const totalPurchases = totalQuick + totalPOs;
+    
+    const grossProfit = totalRevenue - totalPurchases - totalTipsOut;
 
-    const buildOutRows = () => {
-      if (!outstandingList.length) return '<tr><td colspan="4" class="text-center py-8 text-slate-400 text-sm font-medium">No outstanding balances. All clear!</td></tr>';
-      return outstandingList.map(s => `
+    // Builders for Tables
+    const buildInvoiceRows = () => {
+      if (!validInvoices.length) return '<tr><td colspan="4" class="text-center py-8 text-slate-400 text-sm font-medium">No bills in this period.</td></tr>';
+      return validInvoices.map(inv => {
+        let mode = 'UNKNOWN';
+        if (inv.payments && inv.payments.length > 0) {
+            mode = inv.payments.map(p => p.mode.toUpperCase()).join(', ');
+        }
+        return `
+          <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+            <td class="px-5 py-4 text-sm text-slate-500">${new Date(inv.created_at).toLocaleDateString('en-GB')}</td>
+            <td class="px-5 py-4 text-sm font-semibold text-slate-800">${inv.invoice_number || 'N/A'}</td>
+            <td class="px-5 py-4 text-sm text-center"><span class="px-2 py-1 rounded text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">${mode}</span></td>
+            <td class="px-5 py-4 text-sm text-right font-bold text-slate-800">₹${Number(inv.grand_total || 0).toFixed(2)}</td>
+          </tr>
+        `;
+      }).join('');
+    };
+
+    const buildPurchaseRows = () => {
+      const poDetails = (periodPOs || []).map(p => ({ date: p.created_at, ref: p.po_number || 'PO', supplier: p.suppliers?.name || 'Unknown', mode: (p.payment_status === 'credit' || p.payment_mode === 'credit') ? 'CREDIT' : (p.payment_mode || 'CASH').toUpperCase(), amount: Number(p.grand_total || 0) }));
+      const quickDetails = (periodQuick || []).map(p => ({ date: p.created_at, ref: p.notes || 'Quick Purchase', supplier: p.suppliers?.name || 'Unknown', mode: (p.payment_mode === 'credit') ? 'CREDIT' : (p.payment_mode || 'CASH').toUpperCase(), amount: Number(p.total || 0) }));
+      const allPurchasesList = [...poDetails, ...quickDetails].sort((a,b) => new Date(b.date) - new Date(a.date));
+
+      if (!allPurchasesList.length) return '<tr><td colspan="5" class="text-center py-8 text-slate-400 text-sm font-medium">No purchases in this period.</td></tr>';
+      return allPurchasesList.map(p => `
         <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
-          <td class="px-5 py-4 text-sm font-semibold text-slate-800">${s.name}</td>
-          <td class="px-5 py-4 text-sm text-right text-slate-600">₹${s.credit.toFixed(2)}</td>
-          <td class="px-5 py-4 text-sm text-right text-emerald-600">₹${s.paid.toFixed(2)}</td>
-          <td class="px-5 py-4 text-sm text-right font-bold text-red-600">₹${s.balance.toFixed(2)}</td>
+          <td class="px-5 py-4 text-sm text-slate-500">${new Date(p.date).toLocaleDateString('en-GB')}</td>
+          <td class="px-5 py-4 text-sm font-semibold text-slate-800">${p.ref}</td>
+          <td class="px-5 py-4 text-sm text-slate-700">${p.supplier}</td>
+          <td class="px-5 py-4 text-sm text-center"><span class="px-2 py-1 rounded text-[10px] font-bold ${p.mode === 'CREDIT' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}">${p.mode}</span></td>
+          <td class="px-5 py-4 text-sm text-right font-bold text-slate-800">₹${p.amount.toFixed(2)}</td>
+        </tr>
+      `).join('');
+    };
+
+    const buildTipsInRows = () => {
+      if (!tipsInData || !tipsInData.length) return '<tr><td colspan="4" class="text-center py-8 text-slate-400 text-sm font-medium">No tips collected in this period.</td></tr>';
+      return tipsInData.sort((a,b) => new Date(b.paid_at) - new Date(a.paid_at)).map(t => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+          <td class="px-5 py-4 text-sm text-slate-500">${new Date(t.paid_at).toLocaleDateString('en-GB')}</td>
+          <td class="px-5 py-4 text-sm font-semibold text-slate-800">${t.orders?.order_number ? 'Order #' + t.orders.order_number : (t.reference_no || 'Manual Tip')}</td>
+          <td class="px-5 py-4 text-sm"><span class="px-2 py-1 rounded text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">${t.mode}</span></td>
+          <td class="px-5 py-4 text-sm text-right font-bold text-emerald-600">+₹${Number(t.tip_amount).toFixed(2)}</td>
+        </tr>
+      `).join('');
+    };
+
+    const buildTipsOutRows = () => {
+      if (!tipsOut || !tipsOut.length) return '<tr><td colspan="4" class="text-center py-8 text-slate-400 text-sm font-medium">No tip payouts in this period.</td></tr>';
+      return tipsOut.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).map(t => `
+        <tr class="border-b border-slate-100 hover:bg-slate-50 transition">
+          <td class="px-5 py-4 text-sm text-slate-500">${new Date(t.created_at).toLocaleDateString('en-GB')}</td>
+          <td class="px-5 py-4 text-sm font-semibold text-slate-800">${t.staff_name || 'Staff'}</td>
+          <td class="px-5 py-4 text-sm"><span class="px-2 py-1 rounded text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">${t.payment_mode}</span></td>
+          <td class="px-5 py-4 text-sm text-right font-bold text-red-600">-₹${Number(t.amount).toFixed(2)}</td>
         </tr>
       `).join('');
     };
 
     wrapper.innerHTML = `
       <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Revenue</div>
+            <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Revenue (Inc. Tips)</div>
             <div class="text-3xl font-bold text-slate-800 mt-1">₹${totalRevenue.toFixed(2)}</div>
-            <div class="text-xs text-slate-400 mt-2">From invoices in selected period</div>
+            <div class="text-xs text-slate-400 mt-2">Food: ₹${totalFoodRevenue.toFixed(0)} + Tips: ₹${totalTipsIn.toFixed(0)}</div>
           </div>
           <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Purchases</div>
             <div class="text-3xl font-bold text-slate-800 mt-1">₹${totalPurchases.toFixed(2)}</div>
-            <div class="text-xs text-slate-400 mt-2">From purchases in selected period</div>
+          </div>
+          <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+            <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Tips Paid Out</div>
+            <div class="text-3xl font-bold text-red-600 mt-1">₹${totalTipsOut.toFixed(2)}</div>
           </div>
           <div class="bg-slate-900 rounded-xl p-5 shadow-sm">
-            <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Gross Profit</div>
+            <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Net Profit</div>
             <div class="text-3xl font-bold ${grossProfit >= 0 ? 'text-emerald-400' : 'text-red-400'} mt-1">₹${grossProfit.toFixed(2)}</div>
-            <div class="text-xs text-slate-500 mt-2">Revenue - Purchases</div>
           </div>
         </div>
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-8">
+
+        <!-- Bill Details Table (NEW) -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div class="px-5 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-            <div>
-              <h3 class="font-bold text-slate-800 text-sm">Outstanding Supplier Payables</h3>
-              <p class="text-xs text-slate-500">Cumulative credit purchases minus payments made</p>
+            <h3 class="font-bold text-slate-800 text-sm">Bill Details (Selected Period)</h3>
+            <span class="text-xs font-bold text-slate-600 bg-white px-2 py-1 rounded shadow-sm">Total: ₹${totalFoodRevenue.toFixed(2)}</span>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
+              <tr><th class="text-left px-5 py-3 font-semibold">Date</th><th class="text-left px-5 py-3 font-semibold">Bill #</th><th class="text-center px-5 py-3 font-semibold">Mode</th><th class="text-right px-5 py-3 font-semibold">Amount</th></tr>
+            </thead>
+            <tbody>${buildInvoiceRows()}</tbody>
+          </table>
+        </div>
+
+        <!-- Tips Tables -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div class="px-5 py-4 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
+                <h3 class="font-bold text-emerald-800 text-sm">Tips Collected</h3>
+                <span class="text-xs font-bold text-emerald-600 bg-white px-2 py-1 rounded shadow-sm">Total: ₹${totalTipsIn.toFixed(2)}</span>
+              </div>
+              <table class="w-full">
+                <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-100">
+                  <tr><th class="text-left px-5 py-3 font-semibold">Date</th><th class="text-left px-5 py-3 font-semibold">Source</th><th class="text-left px-5 py-3 font-semibold">Mode</th><th class="text-right px-5 py-3 font-semibold">Amount</th></tr>
+                </thead>
+                <tbody>${buildTipsInRows()}</tbody>
+              </table>
             </div>
-            <div class="text-right">
-              <div class="text-xs text-slate-500 uppercase font-bold tracking-wider">Total Owed</div>
-              <div class="text-xl font-bold text-red-600">₹${totalOutstanding.toFixed(2)}</div>
+
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div class="px-5 py-4 bg-red-50 border-b border-red-100 flex justify-between items-center">
+                <h3 class="font-bold text-red-800 text-sm">Tips Paid Out</h3>
+                <span class="text-xs font-bold text-red-600 bg-white px-2 py-1 rounded shadow-sm">Total: ₹${totalTipsOut.toFixed(2)}</span>
+              </div>
+              <table class="w-full">
+                <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-100">
+                  <tr><th class="text-left px-5 py-3 font-semibold">Date</th><th class="text-left px-5 py-3 font-semibold">Staff Name</th><th class="text-left px-5 py-3 font-semibold">Mode</th><th class="text-right px-5 py-3 font-semibold">Amount</th></tr>
+                </thead>
+                <tbody>${buildTipsOutRows()}</tbody>
+              </table>
             </div>
+        </div>
+
+        <!-- Purchases Table -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+            <h3 class="font-bold text-slate-800 text-sm">Purchase Details (Selected Period)</h3>
           </div>
           <table class="w-full">
             <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest">
-              <tr><th class="text-left px-5 py-3 font-semibold">Supplier Name</th><th class="text-right px-5 py-3 font-semibold">Total Credit Purchases</th><th class="text-right px-5 py-3 font-semibold">Total Paid</th><th class="text-right px-5 py-3 font-semibold">Balance Due</th></tr>
+              <tr><th class="text-left px-5 py-3 font-semibold">Date</th><th class="text-left px-5 py-3 font-semibold">Ref / PO</th><th class="text-left px-5 py-3 font-semibold">Supplier</th><th class="text-center px-5 py-3 font-semibold">Mode</th><th class="text-right px-5 py-3 font-semibold">Amount</th></tr>
             </thead>
-            <tbody>${buildOutRows()}</tbody>
+            <tbody>${buildPurchaseRows()}</tbody>
           </table>
         </div>
+
       </div>
     `;
   } catch (err) {
@@ -1836,4 +2115,12 @@ async function renderCashbook() {
     wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
   }
   return wrapper;
+}
+
+// Helper for Date Navigator
+function shiftDate(dateStr, days) {
+    // Append 'T12:00:00' to prevent timezone shift issues when parsing YYYY-MM-DD
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
 }

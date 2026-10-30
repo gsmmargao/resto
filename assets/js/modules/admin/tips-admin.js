@@ -195,7 +195,7 @@ function openRecordTipModal(root) {
             tenant_id: store.state.tenant.id, outlet_id: store.state.outlet.id,
             mode: modeIn.value, amount: 0, tip_amount: amount,
             reference_no: notesIn.value.trim() || 'Manual Tip', status: 'success',
-            received_by: store.state.member?.id || null, paid_at: new Date().toISOString()
+            received_by: store.state.member?.id || null, paid_at: new Date().toISOString(), cash_register_id: store.state.cashRegister?.id || null
           });
           toast('Tip recorded!', 'success'); overlay.remove(); await refresh(); paint(root);
         } catch (err) { toast('Failed: ' + err.message, 'error'); btn.disabled = false; btn.textContent = 'Save Tip'; }

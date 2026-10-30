@@ -44,7 +44,7 @@ async function loadAll() {
   const fullPos = (poRes.data || []).map(po => ({ ...po, _isQuickPurchase: false }));
   const quickPurchases = (quickRes.data || []).map(p => ({
       id: p.id,
-      po_number: p.notes || 'Quick Purchase',
+      po_number: nextPoNumber,
       grand_total: p.total,
       status: p.status,
       created_at: p.created_at,
@@ -162,11 +162,19 @@ function renderPOList(root) {
   filteredPos.forEach(po => {
     const itemCount = (state.poItems[po.id] || []).length;
     
-    // Payment badge
-    let payBadge = el('span', { class: 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold' }, 'UNKNOWN');
-    if (po.payment_status === 'paid') {
-      payBadge = el('span', { class: 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold uppercase' }, `PAID (${po.payment_mode || 'CASH'})`);
-    } else if (po.payment_status === 'credit') {
+    // Payment badge (Bulletproof logic)
+    let status = po.payment_status;
+    let mode = po.payment_mode;
+    
+    // Auto-detect status for old/legacy records
+    if (!status || status === 'unknown') {
+        status = (mode && mode !== 'unknown') ? 'paid' : 'credit';
+    }
+    
+    let payBadge;
+    if (status === 'paid') {
+      payBadge = el('span', { class: 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold uppercase' }, `PAID (${mode || 'CASH'})`);
+    } else {
       payBadge = el('span', { class: 'text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold uppercase' }, 'CREDIT');
     }
 
@@ -403,23 +411,67 @@ function openPOEditor(root) {
       const { data: poNo } = await supabase.rpc('next_doc_number', { p_outlet: draft.outlet_id, p_doc_type: 'po' });
 
       // 1. Create PO
+      
+      // Generate sequential PO Number
+      const { data: existingPOs } = await supabase.from('purchase_orders').select('po_number').eq('tenant_id', draft.tenant_id);
+      let maxPO = 0;
+      if (existingPOs) {
+          existingPOs.forEach(po => {
+              const num = parseInt((po.po_number || '').replace(/\D/g, ''), 10);
+              if (!isNaN(num) && num > maxPO) maxPO = num;
+          });
+      }
+      const nextPoNumber = 'PO-' + (maxPO + 1);
+
       const payload = {
         tenant_id: draft.tenant_id,
         outlet_id: draft.outlet_id,
         supplier_id: draft.supplier_id,
-        po_number: poNo || 'PO-' + Date.now(),
+        po_number: nextPoNumber,
         status: 'received', // Instantly mark as received since we are stocking it
         order_date: draft.order_date,
         subtotal: subtotal,
         tax_total: 0,
         grand_total: subtotal,
         payment_status: draft.payment_status,
-        payment_mode: draft.payment_mode,
+        payment_mode: draft.payment_mode || 'cash',
         notes: draft.notes || null,
         created_by: store.state.session?.user?.id || null,
       };
-      const { data: po, error: poErr } = await supabase.from('purchase_orders').insert(payload).select().single();
+      let { data: po, error: poErr } = await supabase.from('purchase_orders').insert(payload).select().single();
+      
+      
+      
       if (poErr) throw poErr;
+
+      // 1. Auto-record the supplier payment if marked as paid
+      if (payload.payment_status === 'paid') {
+        const { error: payErr } = await supabase.from('supplier_payments').insert({
+          tenant_id: draft.tenant_id,
+          supplier_id: draft.supplier_id,
+          amount: payload.grand_total,
+          payment_mode: (draft.payment_mode || 'cash').toLowerCase(),
+          notes: `Auto-payment for PO ${po.po_number}`,
+          created_by: store.state.session?.user?.id || null
+        });
+        if (payErr) console.error("Failed to record auto-payment:", payErr);
+
+        // Record in cash_movements if cash
+        if (payload.payment_mode === 'cash') {
+            try {
+                const { addCashMovement } = await import('../cash.js');
+                await addCashMovement({ 
+                    type: 'cash_out', 
+                    amount: payload.grand_total, 
+                    reason: `Purchase PO ${po.po_number}`, 
+                    person_name: null 
+                });
+            } catch (err) {
+                console.error('Failed to record cash movement:', err);
+                toast('Warning: Could not deduct from counter. Ensure shift is open.', 'warn');
+            }
+        }
+      }
 
       // 2. Create PO Items
       const rows = validLines.map(l => ({
