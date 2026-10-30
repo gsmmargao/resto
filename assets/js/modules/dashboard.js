@@ -151,6 +151,15 @@ function renderPOS(root) {
   }
 }
 
+
+window.addEventListener('floorplan:reload', () => {
+    const root = document.getElementById('app-content') || document.querySelector('.content-wrapper') || document.body;
+    // Re-render tables view
+    if (typeof renderTables === 'function') {
+        renderTables(root);
+    }
+});
+
 function renderTables(root) {
   renderTablesView(root, async (table, openOrder) => {
     if (openOrder) {

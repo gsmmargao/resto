@@ -33,7 +33,7 @@ async function loadAll() {
 
   const [custRes, progRes, gcRes] = await Promise.all([
     supabase.from('customers')
-      .select('id, phone, name, email, loyalty_points, wallet_balance, total_orders, total_spend, last_visit_at, rfm_segment, created_at')
+      .select('*')
       .eq('tenant_id', tenantId)
       .order('last_visit_at', { ascending: false, nullsFirst: false })
       .limit(500),
@@ -120,15 +120,19 @@ function renderCustomersTab(root) {
   const totalPoints     = state.customers.reduce((s, c) => s + Number(c.loyalty_points || 0), 0);
   const totalWallet     = state.customers.reduce((s, c) => s + Number(c.wallet_balance || 0), 0);
 
+  const totalCredit = state.customers.reduce((s, c) => s + Number(c.credit_balance || 0), 0);
+  const withCredit = state.customers.filter(c => Number(c.credit_balance) > 0);
+
   const summary = el('div', { class: 'grid grid-cols-2 md:grid-cols-4 gap-3' });
   summary.appendChild(kpi('Total Customers', String(state.customers.length), 'from-slate-600 to-slate-700', `${activeCustomers.length} active`));
   summary.appendChild(kpi('Points Outstanding', totalPoints.toFixed(0), 'from-indigo-500 to-indigo-600', `${withPoints.length} holders`));
-  summary.appendChild(kpi('Wallet Balance', fmtMoney(totalWallet), 'from-emerald-500 to-emerald-600', `${withWallet.length} holders`));
+  
   summary.appendChild(kpi('Avg Spend', fmtMoney(
     activeCustomers.length
       ? activeCustomers.reduce((s, c) => s + Number(c.total_spend || 0), 0) / activeCustomers.length
       : 0
   ), 'from-amber-500 to-orange-500', 'Across active customers'));
+  summary.appendChild(kpi('Total Credit Outstanding', fmtMoney(totalCredit), 'from-red-500 to-rose-600', `${withCredit.length} customers owe`));
   wrap.appendChild(summary);
 
   // Filters
@@ -169,7 +173,8 @@ function renderCustomersTab(root) {
         el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Orders'),
         el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Spend'),
         el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Points'),
-        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Wallet'),
+        
+            el('th', { class: 'text-left px-5 py-2 font-semibold text-amber-600' }, 'Credit'),
         el('th', { class: 'text-right px-4 py-2.5 font-semibold w-24' }, ''),
       ]),
     ]),
@@ -183,6 +188,7 @@ function buildCustomerRow(c, root) {
   const initial = (c.name || c.phone || '?').charAt(0).toUpperCase();
   const points = Number(c.loyalty_points || 0);
   const wallet = Number(c.wallet_balance || 0);
+  const credit = Number(c.credit_balance || 0);
 
   const segmentColors = {
     champion:    'bg-purple-100 text-purple-700',
@@ -209,10 +215,15 @@ function buildCustomerRow(c, root) {
     el('td', { class: 'px-4 py-2.5 text-right text-sm text-slate-700' }, String(c.total_orders || 0)),
     el('td', { class: 'px-4 py-2.5 text-right text-sm text-slate-700' }, fmtMoney(c.total_spend || 0)),
     el('td', { class: `px-4 py-2.5 text-right text-sm font-semibold ${points > 0 ? 'text-indigo-600' : 'text-slate-400'}` }, String(points)),
-    el('td', { class: `px-4 py-2.5 text-right text-sm font-semibold ${wallet > 0 ? 'text-emerald-600' : 'text-slate-400'}` }, fmtMoney(wallet)),
-    el('td', { class: 'px-4 py-2.5 text-right' }, [
+    
+    el('td', { class: `px-4 py-2.5 text-right text-sm font-semibold ${credit > 0 ? 'text-red-600' : 'text-slate-400'}` }, fmtMoney(credit)),
+    el('td', { class: 'px-4 py-2.5 text-right flex justify-end items-center gap-2' }, [
       el('span', { class: 'text-xs text-indigo-600 font-medium' }, 'View →'),
-    ]),
+      credit > 0 ? el('button', { 
+          class: 'text-amber-600 hover:text-amber-800 text-xs font-bold bg-amber-50 px-2 py-1 rounded border border-amber-200', 
+          onclick: (e) => { e.stopPropagation(); openSettleCreditModal(c, () => { loadAll(); paint(root); }); } 
+      }, 'Settle') : null
+    ].filter(Boolean)),
   ]);
 }
 
@@ -220,73 +231,97 @@ function buildCustomerRow(c, root) {
 // CUSTOMER DETAIL MODAL
 // ============================================================
 async function openCustomerDetail(root, c) {
-  // Fetch transaction history
-  const [lp, wp] = await Promise.all([
-    supabase.from('loyalty_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(20),
-    supabase.from('wallet_transactions').select('*').eq('customer_id', c.id).order('created_at', { ascending: false }).limit(20),
-  ]);
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden' });
+  
+  card.innerHTML = `
+    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+      <div>
+        <h3 class="font-bold text-xl text-slate-800">${c.name || 'Customer'}</h3>
+        <p class="text-sm text-slate-500">${c.phone || 'No phone'} • ${c.email || 'No email'}</p>
+      </div>
+      <button class="text-slate-400 hover:text-slate-700 text-2xl leading-none" id="close-cust-detail">&times;</button>
+    </div>
+    
+    <div class="p-6 overflow-y-auto bg-slate-100 flex-1 space-y-6">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+          <div class="text-xs text-indigo-800 font-bold uppercase tracking-wider mb-1">Loyalty Points</div>
+          <div class="text-3xl font-bold text-indigo-600">${Number(c.loyalty_points || 0).toFixed(2)}</div>
+        </div>
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div class="text-xs text-amber-800 font-bold uppercase tracking-wider mb-1">Credit Outstanding</div>
+          <div class="text-3xl font-bold text-amber-600">₹${Number(c.credit_balance || 0).toFixed(2)}</div>
+        </div>
+      </div>
 
-  const loyaltyTx = lp.data || [];
-  const walletTx  = wp.data || [];
-
-  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[80] flex items-start md:items-center justify-center p-4 overflow-y-auto' });
-  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8' });
-
-  // Header
-  card.appendChild(el('div', { class: 'px-5 py-4 border-b border-slate-200 flex items-center justify-between' }, [
-    el('div', { class: 'min-w-0' }, [
-      el('h3', { class: 'font-bold text-lg text-slate-800 truncate' }, c.name || c.phone),
-      el('p', { class: 'text-xs text-slate-500 truncate' }, `${c.phone || '—'} · ${c.email || 'no email'}`),
-    ]),
-    el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none shrink-0', onclick: () => overlay.remove() }, '×'),
-  ]));
-
-  const body = el('div', { class: 'p-5 space-y-5' });
-
-  // Balance cards
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
-    el('div', { class: 'rounded-xl border border-indigo-200 bg-indigo-50 p-4' }, [
-      el('div', { class: 'text-[10px] uppercase tracking-wide font-semibold text-indigo-600' }, 'Loyalty Points'),
-      el('div', { class: 'text-3xl font-bold text-indigo-700 mt-1' }, String(Number(c.loyalty_points || 0))),
-      el('div', { class: 'text-[11px] text-indigo-500 mt-1' },
-        state.program ? `Worth ~${fmtMoney(Number(c.loyalty_points || 0) * Number(state.program.redeem_value || 1))}` : ''),
-    ]),
-    el('div', { class: 'rounded-xl border border-emerald-200 bg-emerald-50 p-4' }, [
-      el('div', { class: 'text-[10px] uppercase tracking-wide font-semibold text-emerald-600' }, 'Wallet Balance'),
-      el('div', { class: 'text-3xl font-bold text-emerald-700 mt-1' }, fmtMoney(c.wallet_balance || 0)),
-      el('div', { class: 'text-[11px] text-emerald-500 mt-1' },
-        `${c.total_orders || 0} orders · ${fmtMoney(c.total_spend || 0)} lifetime`),
-    ]),
-  ]));
-
-  // Manual adjustments
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-4 pt-2 border-t border-slate-100' }, [
-    buildPointsAdjuster(root, c, overlay),
-    buildWalletAdjuster(root, c, overlay),
-  ]));
-
-  // History
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-4 pt-2 border-t border-slate-100' }, [
-    buildHistory('Loyalty History', loyaltyTx, (t) => ({
-      label: t.type,
-      amount: `${t.points > 0 ? '+' : ''}${t.points} pts`,
-      cls: t.points > 0 ? 'text-emerald-600' : 'text-red-600',
-      when: t.created_at,
-      notes: t.notes,
-    })),
-    buildHistory('Wallet History', walletTx, (t) => ({
-      label: t.type,
-      amount: `${t.amount > 0 ? '+' : ''}${fmtMoney(t.amount)}`,
-      cls: t.amount > 0 ? 'text-emerald-600' : 'text-red-600',
-      when: t.created_at,
-      notes: t.notes,
-    })),
-  ]));
-
-  card.appendChild(body);
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+          <h3 class="font-bold text-slate-800 text-sm">Credit Ledger (Unsettled Bills)</h3>
+          ${Number(c.credit_balance) > 0 ? `<button class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded shadow-sm" id="btn-settle-from-ledger">Settle Now</button>` : ''}
+        </div>
+        <div id="credit-ledger-list" class="p-4">
+          <div class="text-center text-slate-400 py-4 animate-pulse">Loading ledger...</div>
+        </div>
+      </div>
+    </div>
+  `;
 
   overlay.appendChild(card);
   document.body.appendChild(overlay);
+
+  card.querySelector('#close-cust-detail').onclick = () => overlay.remove();
+  
+  const settleBtn = card.querySelector('#btn-settle-from-ledger');
+  if (settleBtn) {
+      settleBtn.onclick = () => {
+          overlay.remove();
+          openSettleCreditModal(c, () => { loadAll(); paint(root); });
+      };
+  }
+
+  // Fetch and render credit invoices
+  (async () => {
+    const list = card.querySelector('#credit-ledger-list');
+    try {
+        const { data: invoices } = await supabase.from('invoices')
+            .select('*')
+            .eq('customer_id', c.id)
+            .gt('balance_due', 0)
+            .order('created_at', { ascending: false });
+
+        if (!invoices || invoices.length === 0) {
+            list.innerHTML = '<div class="text-center text-slate-400 text-sm">No unpaid bills.</div>';
+            return;
+        }
+
+        list.innerHTML = `
+          <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase border-b border-slate-200">
+              <tr>
+                <th class="text-left pb-2">Date</th>
+                <th class="text-left pb-2">Bill #</th>
+                <th class="text-right pb-2">Total</th>
+                <th class="text-right pb-2">Due</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoices.map(inv => `
+                <tr class="border-b border-slate-100 last:border-0">
+                  <td class="py-2 text-slate-600">${new Date(inv.created_at).toLocaleDateString('en-GB')}</td>
+                  <td class="py-2 font-semibold text-slate-800">${inv.invoice_number}</td>
+                  <td class="py-2 text-right text-slate-600">₹${Number(inv.grand_total).toFixed(2)}</td>
+                  <td class="py-2 text-right font-bold text-red-600">₹${Number(inv.balance_due).toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+    } catch (err) {
+        console.error(err);
+        list.innerHTML = '<div class="text-center text-red-500 text-sm">Failed to load ledger.</div>';
+    }
+  })();
 }
 
 function buildPointsAdjuster(root, c, overlay) {
@@ -806,4 +841,112 @@ function field(label, control) {
     el('label', { class: 'block text-xs font-medium text-slate-600 mb-1' }, label),
     control,
   ]);
+}
+
+
+
+function openSettleCreditModal(customer, onSuccess) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 space-y-4' });
+  
+  const balance = Number(customer.credit_balance || 0);
+  
+  card.innerHTML = `
+    <h3 class="font-bold text-lg text-slate-800">Settle Credit</h3>
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+      <div class="text-xs text-amber-700 font-bold uppercase tracking-wider mb-1">Outstanding Balance</div>
+      <div class="text-2xl font-bold text-amber-700">₹${balance.toFixed(2)}</div>
+      <div class="text-xs text-amber-600 mt-1">Customer: ${customer.name} (${customer.phone || 'No phone'})</div>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">Payment Amount (₹)</label>
+        <input type="number" id="settle-amount" value="${balance.toFixed(2)}" max="${balance.toFixed(2)}" step="0.01" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">Payment Mode</label>
+        <select id="settle-mode" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="card">Card</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex gap-2 pt-2">
+      <button class="flex-1 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm transition" id="btn-cancel-settle">Cancel</button>
+      <button class="flex-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-sm transition" id="btn-confirm-settle">Confirm Payment</button>
+    </div>
+  `;
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  card.querySelector('#btn-cancel-settle').onclick = () => overlay.remove();
+
+  card.querySelector('#btn-confirm-settle').onclick = async () => {
+    const amt = Number(card.querySelector('#settle-amount').value);
+    const mode = card.querySelector('#settle-mode').value;
+    
+    if (!amt || amt <= 0 || amt > balance) {
+        if(window.toast) window.toast('Invalid amount', 'warn');
+        return;
+    }
+
+    card.querySelector('#btn-confirm-settle').textContent = 'Saving...';
+
+    try {
+        // 1. Fetch unpaid credit invoices for this customer
+        const { data: unpaidInvoices } = await supabase.from('invoices')
+            .select('id, balance_due, grand_total')
+            .eq('customer_id', customer.id)
+            .gt('balance_due', 0)
+            .eq('payment_method', 'credit'); // Or however your schema flags credit
+
+        let remainingAmt = amt;
+        
+        // 2. Settle the invoices
+        if (unpaidInvoices && unpaidInvoices.length > 0) {
+            for (const inv of unpaidInvoices) {
+                if (remainingAmt <= 0) break;
+                
+                const invDue = Number(inv.balance_due);
+                const payAmt = Math.min(remainingAmt, invDue);
+                
+                // Create the payment record for this specific invoice
+                await supabase.from('payments').insert({
+                    tenant_id: window.store.state.tenant.id,
+                    outlet_id: window.store.state.outlet.id,
+                    customer_id: customer.id,
+                    invoice_id: inv.id,
+                    mode: mode,
+                    amount: payAmt,
+                    status: 'success',
+                    reference_no: `Credit Settlement`,
+                    paid_at: new Date().toISOString(),
+                    cash_register_id: window.store.state.cashRegister?.id || null
+                });
+
+                // Update the invoice (only update balance_due)
+                await supabase.from('invoices').update({
+                    balance_due: invDue - payAmt
+                }).eq('id', inv.id);
+
+                remainingAmt -= payAmt;
+            }
+        }
+
+        // 3. Update the customer's global balance
+        await supabase.from('customers').update({
+            credit_balance: balance - amt
+        }).eq('id', customer.id);
+
+        if(window.toast) window.toast('Credit settled successfully', 'success');
+        overlay.remove();
+        if (typeof onSuccess === 'function') onSuccess();
+    } catch (err) {
+        console.error(err);
+        if(window.toast) window.toast('Failed to settle credit', 'error');
+        card.querySelector('#btn-confirm-settle').textContent = 'Confirm Payment';
+    }
+  };
 }

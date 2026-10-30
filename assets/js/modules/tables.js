@@ -29,7 +29,7 @@ export async function loadTables() {
 
   try {
     const { data, error } = await supabase.from('orders')
-      .select('id, order_number, table_id, status, grand_total, placed_at, guest_count, customer_name, order_type, table_name_snapshot')
+      .select('id, order_number, table_id, status, grand_total, placed_at, guest_count, customer_name, customer_name_snapshot, order_type, table_name_snapshot')
       .eq('outlet_id', outletId)
       .in('status', ['open','in_kitchen','partially_ready','ready','served','billed','partially_paid']);
     if (error) throw error;
@@ -239,7 +239,7 @@ function buildCard(table, openOrder, onPickTable) {
               el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, `1 pax`),
           ]),
           openOrder ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
-              el('div', { class: 'truncate' }, `#${openOrder.order_number}`),
+              el('div', { class: 'truncate font-semibold' }, `#${openOrder.order_number} ${openOrder.customer_name_snapshot ? '• ' + openOrder.customer_name_snapshot : ''}`),
               el('div', { class: 'flex justify-between' }, [
                   el('span', {}, fmtMoney(openOrder.grand_total || 0)),
                   el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
@@ -283,7 +283,7 @@ function buildCard(table, openOrder, onPickTable) {
     ]),
     openOrder
       ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
-          el('div', { class: 'truncate' }, `#${openOrder.order_number}`),
+          el('div', { class: 'truncate font-semibold' }, `#${openOrder.order_number} ${openOrder.customer_name_snapshot ? '• ' + openOrder.customer_name_snapshot : ''}`),
           el('div', { class: 'flex justify-between' }, [
             el('span', {}, fmtMoney(openOrder.grand_total || 0)),
             el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
@@ -966,11 +966,21 @@ function openSelectCustomerModal(order, tableName) {
                 customer_phone_snapshot: customerPhone
             }).eq('id', order.id);
 
+            // Update local state so the UI reflects immediately
+            const orderIndex = window.store.state.openOrders.findIndex(o => o.id === order.id);
+            if (orderIndex !== -1) {
+                window.store.state.openOrders[orderIndex].customer_name_snapshot = customerName;
+                window.store.state.openOrders[orderIndex].customer_id = customerId;
+            }
+
+            window.dispatchEvent(new CustomEvent('floorplan:reload'));
+            window.dispatchEvent(new CustomEvent('floorplan:reload'));
             if (window.toast) window.toast('Customer updated', 'success');
             overlay.remove();
             
-            // Refresh the floor plan
+            // Force a complete reload of the tables and re-render the UI
             await loadTables();
+            if (typeof window.renderTables === 'function') window.renderTables(); // Trigger dashboard re-render
             window.dispatchEvent(new CustomEvent('cart:changed'));
         } catch (err) {
             console.error(err);

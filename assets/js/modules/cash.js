@@ -192,7 +192,7 @@ export async function openShift({ openingBalance, shiftName, notes }) {
   return data;
 }
 
-export async function addCashMovement({ type, amount, reason }) {
+export async function addCashMovement({ type, amount, reason, person_name }) {
   const shift = store.state.cashRegister;
   if (!shift) throw new Error('No open shift');
   
@@ -202,6 +202,8 @@ export async function addCashMovement({ type, amount, reason }) {
     outlet_id: store.state.outlet?.id,
     cash_register_id: shift.id,
     movement_type: type, amount: Number(amount),
+    person_name: person_name || null,
+    person_name: person_name || null,
     reason: reason || null, created_by: store.state.member?.id || null,
   });
   if (error) throw error;
@@ -415,6 +417,8 @@ async function renderMovementsPanel(root, shift) {
         el('span', { class: `text-xs px-2 py-0.5 rounded-full font-semibold ${isIn ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}` },
           label),
       ]),
+      el('td', { class: 'px-5 py-2 font-medium text-slate-800' }, m.person_name || '—'),
+      el('td', { class: 'px-5 py-2 font-medium text-slate-800' }, m.person_name || '—'),
       el('td', { class: 'px-5 py-2 text-slate-600 truncate max-w-[200px]' }, m.reason || '—'),
       el('td', { class: `px-5 py-2 text-right font-semibold ${isIn ? 'text-emerald-600' : 'text-red-600'}` },
         (isIn ? '+' : '−') + fmtMoney(m.amount)),
@@ -426,6 +430,8 @@ async function renderMovementsPanel(root, shift) {
       el('tr', {}, [
         el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Time'),
         el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Type'),
+        el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Person'),
+        el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Person'),
         el('th', { class: 'text-left px-5 py-2 font-semibold' }, 'Reason'),
         el('th', { class: 'text-right px-5 py-2 font-semibold' }, 'Amount'),
       ]),
@@ -485,17 +491,33 @@ async function renderHistoryPanel() {
 
 function openAddMovementModal(root, shift) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 space-y-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4' });
+
   card.appendChild(el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Add Cash Movement'));
 
   const typeIn = el('select', { class: inputCls }, [
     el('option', { value: 'cash_in' }, 'Cash In (deposit to drawer)'),
-    el('option', { value: 'cash_out' }, 'Cash Out (withdraw from drawer)'),
-    el('option', { value: 'petty_expense' }, 'Petty Expense'),
-    el('option', { value: 'bank_deposit' }, 'Bank Deposit'),
-    el('option', { value: 'tip_payout' }, 'Tip Payout to Staff'),
+    el('option', { value: 'cash_out' }, 'Cash Out (withdraw from drawer)')
   ]);
+
   const amountIn = el('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Amount (₹)', class: inputCls });
+  
+  const nameIn = el('input', { type: 'text', placeholder: 'Person Name (Who took the cash?)', class: inputCls, list: 'cash_movement_names', autocomplete: 'off' });
+  const datalist = document.createElement('datalist');
+  datalist.id = 'cash_movement_names';
+  
+  if (window.supabase && store.state.outlet) {
+      window.supabase.from('cash_movements').select('person_name').eq('outlet_id', store.state.outlet.id).not('person_name', 'is', null).then(({data}) => {
+          if (data) {
+              [...new Set(data.map(d => d.person_name).filter(Boolean))].forEach(n => {
+                  const opt = document.createElement('option');
+                  opt.value = n;
+                  datalist.appendChild(opt);
+              });
+          }
+      });
+  }
+
   const reasonIn = el('input', { type: 'text', placeholder: 'Reason / reference', class: inputCls });
 
   const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' }, [
@@ -508,24 +530,28 @@ function openAddMovementModal(root, shift) {
         e.currentTarget.disabled = true;
         e.currentTarget.textContent = 'Saving…';
         try {
-          await addCashMovement({ type: typeIn.value, amount, reason: reasonIn.value.trim() });
+          await addCashMovement({ type: typeIn.value, amount, person_name: nameIn.value.trim(), reason: reasonIn.value.trim() });
           toast('Movement recorded', 'success');
           overlay.remove();
           await renderCash(root);
         } catch (err) {
-          console.error(err);
           toast('Failed: ' + err.message, 'error');
           e.currentTarget.disabled = false;
           e.currentTarget.textContent = 'Save';
         }
-      },
+      }
     }, 'Save'),
   ]);
 
-  card.appendChild(typeIn); card.appendChild(amountIn); card.appendChild(reasonIn); card.appendChild(btnRow);
+  card.appendChild(typeIn);
+  card.appendChild(amountIn);
+  card.appendChild(nameIn);
+  card.appendChild(datalist);
+  card.appendChild(reasonIn);
+  card.appendChild(btnRow);
+
   overlay.appendChild(card);
   document.body.appendChild(overlay);
-  setTimeout(() => amountIn.focus(), 50);
 }
 
 function openCloseShiftModal(root, shift, totals, movements, expected) {

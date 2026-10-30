@@ -3,9 +3,10 @@ import { store } from '../store.js';
 import { el, fmtMoney, toast } from '../utils.js';
 import { buildReceiptData, buildReceiptHTML } from './receipt.js';
 import { buildReceiptBytes, printUSB, printHTML, isUSBConnected } from './printer.js';
+import { openPersonLedgerModal } from './reports/modals.js';
 
 const state = {
-  tab: 'overview',
+  tab: localStorage.getItem('reports_active_tab') || 'overview',
   startDate: new Date().toISOString().slice(0, 10),
   endDate: new Date().toISOString().slice(0, 10)
 };
@@ -117,8 +118,19 @@ export async function renderReports(root) {
       profit: renderProfitBook
     };
     const panel = await panels[state.tab]();
-    inner.innerHTML = '';
-    inner.appendChild(panel);
+    
+    // Only clear if panel is a valid Node OR the panel didn't self-render
+    if (panel && panel.nodeType === 1) {
+        inner.innerHTML = '';
+        inner.appendChild(panel);
+    } else {
+        // The panel might have rendered itself directly into the DOM
+        // Only show an error if the container is still empty
+        if (!inner.innerHTML.trim() || inner.innerHTML.includes('animate-pulse') || inner.innerHTML.includes('Loading')) {
+            inner.innerHTML = `<div class="bg-red-50 text-red-600 p-6 rounded-xl border border-red-200 text-center font-medium">Failed to render ${state.tab} report.</div>`;
+        }
+        // Otherwise, the tab rendered itself. Do nothing.
+    }
   } catch (err) {
     console.error('[reports]', err);
     inner.innerHTML = '';
