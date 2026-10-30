@@ -7,7 +7,7 @@ import { renderDashboard } from './modules/dashboard.js';
 import { renderKDS } from './modules/kds.js';
 import { renderCash, loadOpenShift } from './modules/cash.js';
 import { renderUpiBook } from './modules/upi-book.js';
-import { renderReports } from './modules/reports.js';
+import { renderReports } from './modules/reports.js?v=1793365677';
 import { renderTipsAdmin } from './modules/admin/tips-admin.js';
 import { renderStock } from './modules/stock.js';
 import { renderStoreKeeper } from './modules/storekeeper.js';
