@@ -40,6 +40,8 @@ export function removeLine(lineId) { updateQty(lineId, 0); }
 
 export function clearCart() {
   store.state.cart = {
+    discountType: 'amount',
+    discountValue: 0,
     orderId: null, orderType: 'dine_in', tableId: null, guestCount: 1, items: [],
     discount: { type: 'percent', value: 0, amount: 0, name: '' },
     serviceChargePct: 0, deliveryCharge: 0, tipAmount: 0,
@@ -70,6 +72,8 @@ export async function loadOrderIntoCart(orderId) {
   }));
 
   store.state.cart = {
+    discountType: 'amount',
+    discountValue: 0,
     orderId: order.id, orderType: order.order_type, tableId: order.table_id,
     guestCount: order.guest_count || 1, items: lines,
     customerId: order.customer_id || null,
@@ -86,31 +90,29 @@ export async function loadOrderIntoCart(orderId) {
 }
 
 function _computeTotals(cart) {
-  let gross = 0, taxable = 0, tax = 0;
+  let gross = 0;
   (cart.items || []).forEach(l => {
-    const lineGross = l.qty * l.unitPrice;
-    gross += lineGross;
-    if (l.taxInclusive) {
-      const base = lineGross / (1 + l.taxRate);
-      taxable += base; tax += lineGross - base;
-    } else {
-      taxable += lineGross; tax += lineGross * l.taxRate;
-    }
+    gross += l.qty * l.unitPrice;
   });
-  let discountAmount = 0;
-  const d = cart.discount || { type: 'percent', value: 0 };
-  if (d.type === 'percent') discountAmount = taxable * (Number(d.value) / 100);
-  else if (d.type === 'flat') discountAmount = Math.min(Number(d.value), taxable);
-  if (discountAmount < 0) discountAmount = 0;
 
-  const factor = taxable > 0 ? (taxable - discountAmount) / taxable : 0;
-  const finalTaxable = taxable - discountAmount;
-  const finalTax = 0; // FORCED NO TAX
-  const serviceCharge = (finalTaxable + finalTax) * (cart.serviceChargePct || 0);
-  let grand = finalTaxable + finalTax + serviceCharge + (cart.deliveryCharge || 0) + (cart.tipAmount || 0);
+  let manualDiscount = 0;
+  const dType = cart.discountType || 'amount';
+  const dVal = Number(cart.discountValue) || 0;
+
+  if (dType === 'percent') {
+    manualDiscount = gross * (Math.min(dVal, 100) / 100);
+  } else {
+    manualDiscount = Math.min(dVal, gross);
+  }
+
+  const finalTaxable = gross - manualDiscount;
+  const serviceCharge = finalTaxable * (cart.serviceChargePct || 0);
+  
+  let grand = finalTaxable + serviceCharge + (cart.deliveryCharge || 0) + (cart.tipAmount || 0);
   const roundOff = Math.round(grand) - grand;
   grand = Math.round(grand);
-  cart.totals = { gross, taxable: finalTaxable, tax: finalTax, discount: discountAmount, serviceCharge, roundOff, grand };
+  
+  cart.totals = { gross, taxable: finalTaxable, tax: 0, discount: manualDiscount, serviceCharge, roundOff, grand };
 }
 
 export function recalcCart() { _computeTotals(store.state.cart); notifyCartChanged(); }
@@ -128,6 +130,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     
     cart.orderType === 'dine_in' ? el('button', {
       class: `w-full text-left px-3 py-2 rounded-md border text-sm flex justify-between items-center ${cart.tableId ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-300 text-slate-600 hover:border-indigo-400'} ${cart.orderId ? 'opacity-60' : ''}`,
+      
       onclick: () => { if (cart.orderId) { toast('Table locked', 'warn'); return; } onPickTable(); },
     }, [
       el('span', {}, cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away') : (cart.tableId ? `Table: ${store.state.tables.find(x=>x.id===cart.tableId)?.name || '—'}` : 'Select table…')),
@@ -135,7 +138,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     ]) : null,
   ].filter(Boolean));
 
-  const lines = el('div', { class: 'flex-1 overflow-y-auto bg-slate-50' });
+  const lines = el('div', { class: 'flex-1 overflow-y-auto bg-slate-50', id: 'cart-scroll-area' });
   if (!cart.items.length) lines.appendChild(el('div', { class: 'p-6 text-center text-slate-400 text-sm' }, 'Cart is empty'));
   else cart.items.forEach(l => lines.appendChild(buildLine(l)));
 
@@ -143,10 +146,65 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     el('span', { class: 'text-slate-500' }, label), el('span', { class: 'text-slate-800 font-medium' }, value),
   ]);
 
+  // Floating Scroll Buttons
+  const scrollControls = el('div', { class: 'absolute bottom-32 right-3 flex flex-col gap-2 z-50 lg:hidden' }, [
+    el('button', { 
+      class: 'w-9 h-9 rounded-full bg-slate-800/80 text-white shadow-lg flex items-center justify-center hover:bg-slate-900 transition', 
+      onclick: () => { document.getElementById('cart-scroll-area').scrollTo({ top: 0, behavior: 'smooth' }); } 
+    }, '↑'),
+    el('button', { 
+      class: 'w-9 h-9 rounded-full bg-slate-800/80 text-white shadow-lg flex items-center justify-center hover:bg-slate-900 transition', 
+      onclick: () => { const e = document.getElementById('cart-scroll-area'); e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' }); } 
+    }, '↓')
+  ]);
+  
+  wrap.appendChild(scrollControls);
+
   const totals = el('div', { class: 'bg-white border-t border-slate-200 p-3 text-sm' }, [
+    el('div', { class: 'flex items-center justify-between mb-2' }, [
+      el('span', { class: 'text-sm font-medium text-slate-600' }, 'Discount'),
+      el('div', { class: 'flex items-center bg-slate-100 rounded-lg border border-slate-300 overflow-hidden' }, [
+        el('div', { class: 'flex border-r border-slate-300' }, [
+          el('button', {
+            class: `px-3 py-1.5 text-sm font-bold transition ${(cart.discountType || 'amount') === 'amount' ? 'bg-slate-300 text-slate-900' : 'text-slate-500 hover:bg-slate-200'}`,
+            onclick: () => {
+              store.state.cart.discountType = 'amount';
+              _computeTotals(store.state.cart);
+              window.dispatchEvent(new CustomEvent('cart:changed'));
+            }
+          }, '₹'),
+          el('button', {
+            class: `px-3 py-1.5 text-sm font-bold transition ${cart.discountType === 'percent' ? 'bg-slate-300 text-slate-900' : 'text-slate-500 hover:bg-slate-200'}`,
+            onclick: () => {
+              store.state.cart.discountType = 'percent';
+              _computeTotals(store.state.cart);
+              window.dispatchEvent(new CustomEvent('cart:changed'));
+            }
+          }, '%')
+        ]),
+        el('input', {
+          id: 'discount-input',
+          type: 'text',
+          inputmode: 'decimal',
+          class: 'w-16 bg-transparent text-sm font-bold focus:outline-none p-1.5 text-right',
+          placeholder: '0',
+          value: cart.discountValue || '',
+          oninput: (e) => {
+            const val = e.target.value;
+            const pos = e.target.selectionStart;
+            store.state.cart.discountValue = Number(val) || 0;
+            _computeTotals(store.state.cart);
+            window.dispatchEvent(new CustomEvent('cart:changed'));
+            setTimeout(() => {
+              const inp = document.getElementById('discount-input');
+              if (inp) { inp.focus(); inp.setSelectionRange(pos, pos); }
+            }, 10);
+          }
+        })
+      ])
+    ]),
     row('Subtotal', fmtMoney(t.gross)),
     t.discount > 0 ? row('Discount', `− ${fmtMoney(t.discount)}`, 'text-emerald-600') : null,
-    // Tax row removed
     t.serviceCharge > 0 ? row('Service Charge', fmtMoney(t.serviceCharge)) : null,
     t.roundOff !== 0 ? row('Round Off', fmtMoney(t.roundOff)) : null,
     el('div', { class: 'flex justify-between pt-2 mt-2 border-t border-dashed border-slate-300 text-base font-semibold text-slate-900' }, [
@@ -187,6 +245,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 
     el('button', {
       class: `col-span-2 py-3 rounded-lg text-base font-semibold shadow-sm transition ${cart.orderId ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
+      
       onclick: () => { if (cart.orderId) onCheckout(); else toast('Send to kitchen first', 'warn'); },
     }, cart.orderId ? `Checkout • ${fmtMoney(t.grand)}` : 'Checkout • —'),
   ].filter(Boolean));

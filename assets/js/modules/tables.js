@@ -1,3 +1,4 @@
+import { navigate } from '../router.js';
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
 import { el, fmtMoney, fmtRelative } from '../utils.js';
@@ -49,8 +50,6 @@ export function renderTablesView(root, onPickTable) {
     el('div', { class: 'flex flex-wrap items-center gap-2 text-xs' }, [
       legend('bg-emerald-500', 'Available'),
       legend('bg-red-500',     'Occupied'),
-      legend('bg-amber-400',   'Reserved'),
-      legend('bg-slate-400',   'Cleaning'),
     ]),
   ]);
 
@@ -160,7 +159,8 @@ function buildCard(table, openOrder, onPickTable) {
                   }]).select().single();
 
                   if (newTable) {
-                      newTable.name = name; // Override the DB name for the UI
+                      newTable.name = name;
+                    if (window.store?.state?.cart) { window.store.state.cart.orderType = 'takeaway'; window.store.state.cart.tableId = newTable.id; window.store.state.cart.tableName = name; } // Override the DB name for the UI
                       // 3. Add to state and open
                       const currentTables = window.store.state.tables || [];
                       window.store.set('tables', [...currentTables, newTable]);
@@ -274,6 +274,13 @@ function buildCard(table, openOrder, onPickTable) {
           }
           return;
       }
+      // --- Force the cart to match the table type ---
+      if (window.store && window.store.state.cart) {
+          window.store.state.cart.orderType = isTakeaway ? 'takeaway' : 'dine_in';
+          window.store.state.cart.tableId = table.id;
+          window.store.state.cart.tableName = displayName;
+      }
+      
       if (typeof onPickTable === 'function') onPickTable(table, openOrder);
     },
   }, [
@@ -343,7 +350,7 @@ export function openTableActionModal(table, openOrder, onPickTable) {
   // 1. Take Order (Blue)
   body.appendChild(el('button', {
     class: 'w-full py-3 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-lg transition shadow-sm text-sm',
-    onclick: () => { overlay.remove(); if (typeof onPickTable === 'function') onPickTable(table, openOrder); }
+    onclick: () => { overlay.remove(); if (typeof onPickTable === 'function') onPickTable(table, openOrder, 'pos'); }
   }, 'Take Order'));
 
   // 2. Generate Bill (Green)
@@ -351,13 +358,7 @@ export function openTableActionModal(table, openOrder, onPickTable) {
     class: 'w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg transition shadow-sm text-sm',
     onclick: () => { 
         overlay.remove(); 
-        // Load the table first
-        if (typeof onPickTable === 'function') onPickTable(table, openOrder); 
-        // Attempt to trigger the checkout button after a short delay
-        setTimeout(() => {
-            const checkoutBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Checkout'));
-            if (checkoutBtn) checkoutBtn.click();
-        }, 500);
+        if (typeof onPickTable === 'function') onPickTable(table, openOrder, 'checkout'); 
     }
   }, 'Generate Bill'));
 
@@ -645,11 +646,12 @@ function openShiftTableModal(currentOrder, currentTableName, onSuccess) {
 
             try {
                 // 1. Update the order
+                const isNewTakeaway = newTableName.toLowerCase().includes('take-away') || newTableName.toLowerCase().includes('takeaway');
                 const { error: orderErr } = await supabase.from('orders')
                     .update({ 
                         table_id: newTableId, 
                         table_name_snapshot: newTableName,
-                        order_type: 'dine_in' // If it was takeaway, it becomes dine-in
+                        order_type: isNewTakeaway ? 'takeaway' : 'dine_in'
                     })
                     .eq('id', currentOrder.id);
                 
@@ -663,8 +665,25 @@ function openShiftTableModal(currentOrder, currentTableName, onSuccess) {
                 // 3. Update new table
                 await supabase.from('dining_tables').update({ status: 'occupied' }).eq('id', newTableId);
 
-                if (window.toast) window.toast('Order shifted successfully', 'success');
+                                if (window.toast) window.toast('Order shifted successfully', 'success');
                 overlay.remove();
+                
+                // 1. Instantly update local state so there is no flicker
+                const oldT = window.store.state.tables.find(t => t.id === currentOrder.table_id);
+                const newT = window.store.state.tables.find(t => t.id === newTableId);
+                if (oldT) oldT.status = 'available';
+                if (newT) newT.status = 'occupied';
+
+                // 2. Update the open order in local state
+                const orderInState = window.store.state.openOrders.find(o => o.id === currentOrder.id);
+                if (orderInState) {
+                    orderInState.table_id = newTableId;
+                    orderInState.table_name_snapshot = newTableName;
+                }
+
+                // 3. Trigger the floor plan reload event (dashboard.js listens for this)
+                window.dispatchEvent(new CustomEvent('floorplan:reload'));
+
                 if (typeof onSuccess === 'function') onSuccess();
 
             } catch (err) {

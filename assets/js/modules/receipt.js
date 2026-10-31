@@ -1,7 +1,20 @@
 import { padLine } from './escpos.js';
 import { CONFIG } from '../../../config.js';
 
+function escapeHtml(unsafe) {
+    return (unsafe || '').toString()
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+}
+
 export function buildReceiptData({ tenant, outlet, order, items, invoice, payments, customer, tableName }) {
+  const rawTable = tableName || order?.table_name_snapshot || '';
+  const isTakeaway = rawTable.toLowerCase().includes('take') || order?.order_type === 'takeaway';
+  const cleanTableName = rawTable.split(' - ')[0].trim();
+
   return {
     header: {
       name:    tenant?.name || 'Restaurant',
@@ -12,33 +25,25 @@ export function buildReceiptData({ tenant, outlet, order, items, invoice, paymen
     },
     invoice: {
       number:      invoice.invoice_number,
-      date:        new Date(invoice.invoice_time).toLocaleString(CONFIG.LOCALE),
+      date:        new Date(invoice.invoice_time || invoice.created_at).toLocaleString(CONFIG.LOCALE),
       orderNumber: order?.order_number || '',
-      orderType:   order?.order_type || '',
-      table: (() => {
-        const rawName = tableName || order?.table_name_snapshot || '';
-        if (order?.order_type === 'takeaway') {
-            return rawName.split(' - ')[0] || 'Take-away';
-        }
-        return rawName;
-      })(),
+      isTakeaway:  isTakeaway,
+      table:       cleanTableName,
     },
     customer: {
-      name:  customer?.name  || '',
-      phone: customer?.phone || '',
-      gstin: customer?.gstin || '',
+      name:  customer?.name  || invoice.customer_name || '',
+      phone: customer?.phone || invoice.customer_phone || '',
+      gstin: customer?.gstin || invoice.customer_gstin || '',
     },
     items: (items || []).map(it => {
-      // Calculate pure amount by stripping any tax that might have been saved previously
-      const lineTotal = Number(it.line_total || 0);
-      const taxAmount = Number(it.tax_amount || 0);
-      const pureAmount = lineTotal - taxAmount;
+      // FIX: Force the amount to be the pure base price (Rate x Qty) so tax isn't silently added here
+      const pureAmount = Number(it.unit_price || 0) * Number(it.quantity || 0);
 
       return {
         name:    it.name_snapshot ? (it.name_snapshot + (it.variant_name ? ` (${it.variant_name})` : '')) : (it.description || 'Unknown Item'),
         qty:     Number(it.quantity),
         rate:    Number(it.unit_price),
-        amount:  pureAmount, // Now shows 279.00 instead of 292.95
+        amount:  pureAmount,
         taxRate: Number(it.tax_rate),
         hsn:     it.hsn_code || '996331',
       };
@@ -82,11 +87,27 @@ export function buildReceiptText(data) {
   hr('=');
 
   push(padLine(`Inv: ${data.invoice.number}`, data.invoice.date, W));
-  push(padLine(`Order: ${data.invoice.orderNumber}`,
-               data.invoice.orderType.replace('_',' '), W));
-  if (data.invoice.table) push(`Table: ${data.invoice.table}`);
-  if (data.customer.phone) push(padLine(data.customer.name || '', data.customer.phone, W));
+  push(padLine(`Order: ${data.invoice.orderNumber}`, data.invoice.isTakeaway ? '' : 'Dine In', W));
+  
+  if (data.invoice.table) {
+      if (data.invoice.isTakeaway) {
+          const custName = data.customer.name || data.invoice.table;
+          push(`Take-away: ${custName}`);
+      } else {
+          push(`Table: ${data.invoice.table}`);
+      }
+  }
+  
+  // FIX: Don't print the name twice if it's a takeaway
+  if (data.customer.phone) {
+      if (data.invoice.isTakeaway) {
+          push(`Ph: ${data.customer.phone}`);
+      } else {
+          push(padLine(data.customer.name || '', data.customer.phone, W));
+      }
+  }
   if (data.customer.gstin) push(`GSTIN: ${data.customer.gstin}`);
+  
   hr('-');
   push(padLine('Item', 'Amount', W));
   hr('-');
@@ -99,6 +120,9 @@ export function buildReceiptText(data) {
 
   push(padLine('Subtotal',  data.totals.gross.toFixed(2), W));
   if (data.totals.discount > 0) push(padLine('Discount', `-${data.totals.discount.toFixed(2)}`, W));
+  if (data.totals.cgst > 0) push(padLine('CGST', data.totals.cgst.toFixed(2), W));
+  if (data.totals.sgst > 0) push(padLine('SGST', data.totals.sgst.toFixed(2), W));
+  if (data.totals.igst > 0) push(padLine('IGST', data.totals.igst.toFixed(2), W));
   if (data.totals.serviceCharge > 0) push(padLine('Svc Charge', data.totals.serviceCharge.toFixed(2), W));
   if (data.totals.roundOff) push(padLine('Round Off', data.totals.roundOff.toFixed(2), W));
   hr('-');
@@ -109,6 +133,12 @@ export function buildReceiptText(data) {
     push(padLine(p.mode.toUpperCase(), p.amount.toFixed(2), W));
     if (p.ref) push(`  Ref: ${p.ref}`);
   }
+  
+  if (data.totals.balance > 0) {
+    hr('-');
+    push(padLine('BALANCE DUE', data.totals.balance.toFixed(2), W));
+  }
+  
   hr('-');
   push(data.footer.thanks);
   return out.join('\n');
@@ -118,51 +148,60 @@ export function buildReceiptHTML(data) {
   const rows = data.items.map(it => `
     <tr>
       <td>${escapeHtml(it.name)}</td>
-      <td class="r">${it.qty}</td>
-      <td class="r">${it.rate.toFixed(2)}</td>
-      <td class="r">${it.amount.toFixed(2)}</td>
-    </tr>`).join('');
+      <td style="text-align:center">${it.qty}</td>
+      <td style="text-align:right">${it.rate.toFixed(2)}</td>
+      <td style="text-align:right">${it.amount.toFixed(2)}</td>
+    </tr>
+  `).join('');
 
-  const payRows = data.payments.map(p => `
-    <tr><td>${escapeHtml(p.mode.toUpperCase())}${p.ref ? ' • ' + escapeHtml(p.ref) : ''}</td>
-        <td class="r">₹${p.amount.toFixed(2)}</td></tr>`).join('');
-
-  const line = (label, val, cls='') =>
-    `<div class="row ${cls}"><span>${escapeHtml(label)}</span><span>${val}</span></div>`;
+  const line = (label, val) => `
+    <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+      <span>${label}</span><span>${val}</span>
+    </div>
+  `;
 
   return `
-    <div class="receipt">
-      <div class="center">
-        <div class="bold big">${escapeHtml(data.header.name)}</div>
-        ${data.header.address ? `<div>${escapeHtml(data.header.address)}</div>` : ''}
-        ${data.header.phone   ? `<div>Ph: ${escapeHtml(data.header.phone)}</div>` : ''}
-        ${data.header.gstin   ? `<div>GSTIN: ${escapeHtml(data.header.gstin)}</div>` : ''}
-        ${data.header.fssai   ? `<div>FSSAI: ${escapeHtml(data.header.fssai)}</div>` : ''}
+    <div style="font-family:monospace; width:300px; margin:0 auto; padding:10px; background:#fff; color:#000;">
+      <div style="text-align:center; margin-bottom:10px;">
+        <div style="font-weight:bold; font-size:1.2em;">${data.header.name}</div>
+        ${data.header.address ? `<div>${data.header.address}</div>` : ''}
+        ${data.header.phone ? `<div>Ph: ${data.header.phone}</div>` : ''}
       </div>
-      <hr>
-      <div class="row"><span>Inv: ${escapeHtml(data.invoice.number)}</span><span>${escapeHtml(data.invoice.date)}</span></div>
-      <div class="row"><span>Order: ${escapeHtml(data.invoice.orderNumber)}</span><span>${escapeHtml(data.invoice.orderType.replace('_',' '))}</span></div>
-      ${data.invoice.table ? `<div>Table: ${escapeHtml(data.invoice.table)}</div>` : ''}
-      ${data.customer.phone ? `<div>${escapeHtml(data.customer.name)} • ${escapeHtml(data.customer.phone)}</div>` : ''}
-      <hr>
-      <table>
-        <thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amt</th></tr></thead>
+      <div style="border-bottom:1px dashed #000; margin:5px 0;"></div>
+      
+      <div>Inv: ${data.invoice.number} <span style="float:right">${data.invoice.date}</span></div>
+      <div>Order: ${data.invoice.orderNumber} ${data.invoice.isTakeaway ? '' : '<span style="float:right">Dine In</span>'}</div>
+      ${data.invoice.table ? `<div>${data.invoice.isTakeaway ? 'Take-away: ' + (data.customer.name || data.invoice.table) : 'Table: ' + data.invoice.table}</div>` : ''}
+      
+      ${data.customer.phone ? `<div>${!data.invoice.isTakeaway ? data.customer.name + ' • ' : ''}${data.customer.phone}</div>` : ''}
+      <div style="border-bottom:1px dashed #000; margin:5px 0;"></div>
+      
+      <table style="width:100%; font-size:0.9em; margin-bottom:5px;">
+        <thead><tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amt</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <hr>
-      ${line('Subtotal',  '₹' + data.totals.gross.toFixed(2))}
+      
+      <div style="border-bottom:1px dashed #000; margin:5px 0;"></div>
+      
+      ${line('Subtotal', '₹' + data.totals.gross.toFixed(2))}
       ${data.totals.discount > 0 ? line('Discount', '-₹' + data.totals.discount.toFixed(2)) : ''}
-      ${data.totals.roundOff ? line('Round Off', '₹' + data.totals.roundOff.toFixed(2)) : ''}
-      <hr>
-      <div class="row bold big"><span>TOTAL</span><span>₹${data.totals.grand.toFixed(2)}</span></div>
-      <hr>
-      <table>${payRows}</table>
-      <hr>
-      <div class="center">${escapeHtml(data.footer.thanks)}</div>
-    </div>`;
-}
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c =>
-    ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+      ${data.totals.cgst > 0 ? line('CGST', '₹' + data.totals.cgst.toFixed(2)) : ''}
+      ${data.totals.sgst > 0 ? line('SGST', '₹' + data.totals.sgst.toFixed(2)) : ''}
+      ${data.totals.igst > 0 ? line('IGST', '₹' + data.totals.igst.toFixed(2)) : ''}
+      ${data.totals.serviceCharge > 0 ? line('Svc Charge', '₹' + data.totals.serviceCharge.toFixed(2)) : ''}
+      ${data.totals.roundOff !== 0 ? line('Round Off', data.totals.roundOff.toFixed(2)) : ''}
+      
+      <div style="border-bottom:1px dashed #000; margin:5px 0;"></div>
+      
+      <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:1.1em; margin-bottom:5px;">
+        <span>TOTAL</span><span>₹${data.totals.grand.toFixed(2)}</span>
+      </div>
+      
+      ${data.payments.map(p => line(p.mode.toUpperCase(), '₹' + p.amount.toFixed(2))).join('')}
+      ${data.totals.balance > 0 ? `<div style="display:flex; justify-content:space-between; font-weight:bold; margin-top:5px; color:red;"><span>BALANCE DUE</span><span>₹${data.totals.balance.toFixed(2)}</span></div>` : ''}
+      
+      <div style="border-bottom:1px dashed #000; margin:10px 0;"></div>
+      <div style="text-align:center; font-size:0.8em;">${data.footer.thanks}</div>
+    </div>
+  `;
 }

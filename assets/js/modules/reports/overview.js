@@ -3,17 +3,17 @@ import { store } from '../../store.js';
 import { el, fmtMoney, toast } from '../../utils.js';
 import { buildReceiptData, buildReceiptHTML } from '../receipt.js';
 import { buildReceiptBytes, printUSB, printHTML, isUSBConnected } from '../printer.js';
-import { kpi } from './helpers.js';
+import { kpi, state, rangeStart, rangeEnd } from './helpers.js';
 
 export async function renderOverview() {
   const outletId = store.state.outlet.id;
   let fromDate = state.startDate || new Date().toISOString().split('T')[0];
   let toDate = state.endDate || new Date().toISOString().split('T')[0];
-  const from = fromDate + 'T00:00:00';
-  const to = toDate + 'T23:59:59';
+  const from = rangeStart().toISOString();
+  const to = rangeEnd().toISOString();
 
   const [invRes, itemsRes, payRes, shiftRes] = await Promise.all([
-    supabase.from('invoices').select('id, order_id, grand_total, created_at, customer_id, orders(customer_id)')
+    supabase.from('invoices').select('id, order_id, grand_total, discount_total, balance_due, created_at, customer_id, orders(customer_id)')
       .eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to),
     supabase.from('order_items').select('order_id, quantity, line_total, cost_price')
       .eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to).neq('status', 'cancelled'),
@@ -39,6 +39,9 @@ export async function renderOverview() {
   const validItems = rawItems.filter(i => validOrderIds.has(i.order_id));
 
   const gross = validInvoices.reduce((s, inv) => s + Number(inv.grand_total || 0), 0);
+  const totalDiscount = validInvoices.reduce((s, inv) => s + Number(inv.discount_total || 0), 0);
+  const pendingCredit = validInvoices.reduce((s, inv) => s + Number(inv.balance_due || 0), 0); // Keep this
+  const realizedGross = gross - pendingCredit;
   const orderCount = validInvoices.length;
   const itemCount = validItems.reduce((s, i) => s + Number(i.quantity || 0), 0);
   const aov = orderCount ? gross / orderCount : 0;
@@ -47,30 +50,44 @@ export async function renderOverview() {
   const uniqueCust = new Set(validInvoices.map(inv => inv.customer_id || inv.orders?.customer_id).filter(Boolean)).size;
   
   const itemCost = validItems.reduce((s, i) => s + Number(i.quantity) * Number(i.cost_price || 0), 0);
-  const grossProfit = gross - itemCost;
-  const marginPct = gross > 0 ? (grossProfit / gross) * 100 : 0;
+ // Deduct unpaid credit
+  const grossProfit = realizedGross - itemCost;
+  const marginPct = realizedGross > 0 ? (grossProfit / realizedGross) * 100 : 0;
   
   const totalTips = validPays.reduce((s, p) => s + Number(p.tip_amount || 0), 0);
   
   const byMode = {};
+  let realPaymentCount = 0;
+  
   validPays.forEach(p => { 
-    const modeTotal = Number(p.amount || 0) + Number(p.tip_amount || 0);
-    byMode[p.mode] = (byMode[p.mode] || 0) + modeTotal; 
+    // Only count real payments, ignore the initial 'credit' booking
+    if (p.mode !== 'credit') {
+      const modeTotal = Number(p.amount || 0) + Number(p.tip_amount || 0);
+      byMode[p.mode] = (byMode[p.mode] || 0) + modeTotal; 
+      realPaymentCount++;
+    }
   });
+
+  // Add the actual unpaid pending credit to the breakdown so it matches Total Sales
+  if (pendingCredit > 0) {
+    byMode['credit'] = pendingCredit;
+  }
   
   const varianceTotal = shifts.filter(s => s.status === 'closed').reduce((s, x) => s + Number(x.cash_difference || 0), 0);
 
   const wrap = el('div', {});
-  const grid = el('div', { class: 'grid grid-cols-2 md:grid-cols-4 gap-3 mb-4' });
+  const grid = el('div', { class: 'grid grid-cols-2 md:grid-cols-6 gap-3 mb-4' });
   grid.appendChild(kpi('Gross Sales', fmtMoney(gross), 'from-indigo-500 to-indigo-600', `${orderCount} orders`));
+  grid.appendChild(kpi('Discount Given', fmtMoney(totalDiscount), 'from-rose-500 to-pink-500', 'Total discount applied'));
   grid.appendChild(kpi('Avg Order', fmtMoney(aov), 'from-emerald-500 to-emerald-600', `${itemCount} items sold`));
   grid.appendChild(kpi('Gross Profit', fmtMoney(grossProfit), 'from-amber-500 to-orange-500', `${marginPct.toFixed(1)}% margin`));
   grid.appendChild(kpi('Tips Collected', fmtMoney(totalTips), 'from-purple-500 to-purple-600', `${uniqueCust} unique guests`));
+  grid.appendChild(kpi('Pending Credit', fmtMoney(pendingCredit), 'from-red-500 to-red-600', 'Unsettled bills'));
 
   const modesCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden flex-1' }, [
     el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
       el('h3', { class: 'font-semibold text-slate-800 text-sm' }, 'Payment Modes'),
-      el('span', { class: 'text-xs text-slate-500' }, `${validPays.length} transactions`),
+      el('span', { class: 'text-xs text-slate-500' }, `${realPaymentCount + (pendingCredit > 0 ? 1 : 0)} transactions`),
     ]),
     el('div', { class: 'p-4 space-y-3' }, Object.entries(byMode).map(([mode, amt]) => {
       const pct = gross > 0 ? (amt / (gross + totalTips)) * 100 : 0;

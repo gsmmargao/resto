@@ -84,11 +84,31 @@ async function refreshOpenOrders() {
   store.set('openOrders', data || []);
 }
 
-async function openOrderIntoCart(orderId, orderNumber) {
+async function openOrderIntoCart(orderId, orderNumber, action = 'pos') {
   const loaded = await loadOrderIntoCart(orderId);
   if (!loaded) return;
+  
+  // Force cart to know we are in POS mode for this order
+  const order = window.store.state.openOrders.find(o => o.id === orderId);
+  if (order) {
+      window.store.state.cart.orderId = orderId;
+      window.store.state.cart.tableId = order.table_id;
+      window.store.state.cart.orderType = order.order_type;
+  }
+
   toast(`Order #${orderNumber} loaded`, 'success');
   navigate('dashboard');
+
+  // If the user clicked "Generate Bill", open the checkout modal automatically
+  if (action === 'checkout') {
+      setTimeout(() => {
+          if (window.store.state.cashRegister) {
+              openCheckoutModal();
+          } else {
+              toast('Open a shift first (Cash menu)', 'warn');
+          }
+      }, 300);
+  }
 }
 
 function safeCheckout() {
@@ -97,10 +117,11 @@ function safeCheckout() {
 }
 
 function renderPOS(root) {
-  const layout = el('div', { class: 'h-full grid grid-cols-12 gap-0' });
+  // Use flex-col for mobile (stacked), grid for desktop (side-by-side)
+  const layout = el('div', { class: 'h-full flex flex-col lg:grid lg:grid-cols-12 lg:gap-0' });
 
-  const left  = el('div', { class: 'col-span-7 lg:col-span-8 h-full flex flex-col border-r border-slate-200 min-h-0' });
-  const right = el('div', { class: 'col-span-5 lg:col-span-4 h-full flex flex-col min-h-0' });
+  const left  = el('div', { class: 'flex-1 min-h-0 lg:col-span-7 xl:col-span-8 lg:border-r lg:border-slate-200 flex flex-col' });
+  const right = el('div', { class: 'flex-1 min-h-0 lg:col-span-5 xl:col-span-4 flex flex-col border-t lg:border-t-0 border-slate-200 relative' });
 
   renderMenuPanel(left, { onAddItem: ({ item, variant }) => addToCart({ item, variant }) });
 
@@ -164,9 +185,9 @@ function renderTables(root) {
   renderTablesView(root, async (table, openOrder) => {
     if (openOrder) {
       // Call our custom 4-option modal from tables.js
-      openTableActionModal(table, openOrder, async (t, o) => {
+      openTableActionModal(table, openOrder, async (t, o, action) => {
         // This callback is triggered when user clicks "Take Order" or "Generate Bill"
-        await openOrderIntoCart(o.id, o.order_number);
+        await openOrderIntoCart(o.id, o.order_number, action);
       });
     } else {
       const ok = await confirmDialog(`Start a new order at table ${table.name}?`, 'New order');

@@ -1,3 +1,4 @@
+import { state, rangeStart, rangeEnd } from './helpers.js';
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el } from '../../utils.js';

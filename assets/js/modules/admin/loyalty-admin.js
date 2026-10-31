@@ -1,3 +1,4 @@
+import { navigate } from '../../router.js';
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, fmtMoney, toast, confirmDialog } from '../../utils.js';
@@ -19,7 +20,8 @@ export async function renderLoyaltyAdmin(root) {
   root.appendChild(el('div', { class: 'h-full flex items-center justify-center text-slate-400 text-sm' }, 'Loading loyalty data…'));
 
   try {
-    if (!state.loaded) await loadAll();
+    // Force a fresh fetch every time the page is loaded or navigated to
+    await loadAll();
     paint(root);
   } catch (err) {
     console.error('[loyalty-admin]', err);
@@ -257,7 +259,7 @@ async function openCustomerDetail(root, c) {
 
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="px-5 py-3 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-          <h3 class="font-bold text-slate-800 text-sm">Credit Ledger (Unsettled Bills)</h3>
+          <h3 class="font-bold text-slate-800 text-sm">Customer Ledger (All Bills)</h3>
           ${Number(c.credit_balance) > 0 ? `<button class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded shadow-sm" id="btn-settle-from-ledger">Settle Now</button>` : ''}
         </div>
         <div id="credit-ledger-list" class="p-4">
@@ -280,43 +282,60 @@ async function openCustomerDetail(root, c) {
       };
   }
 
-  // Fetch and render credit invoices
+  // Fetch and render FULL ledger (all bills)
   (async () => {
     const list = card.querySelector('#credit-ledger-list');
     try {
         const { data: invoices } = await supabase.from('invoices')
-            .select('*')
+            .select('id, invoice_number, grand_total, balance_due, created_at')
             .eq('customer_id', c.id)
-            .gt('balance_due', 0)
             .order('created_at', { ascending: false });
 
         if (!invoices || invoices.length === 0) {
-            list.innerHTML = '<div class="text-center text-slate-400 text-sm">No unpaid bills.</div>';
+            list.innerHTML = '<div class="text-center text-slate-400 text-sm">No bills found for this customer.</div>';
             return;
         }
 
         list.innerHTML = `
-          <table class="w-full text-sm">
-            <thead class="text-xs text-slate-500 uppercase border-b border-slate-200">
-              <tr>
-                <th class="text-left pb-2">Date</th>
-                <th class="text-left pb-2">Bill #</th>
-                <th class="text-right pb-2">Total</th>
-                <th class="text-right pb-2">Due</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${invoices.map(inv => `
-                <tr class="border-b border-slate-100 last:border-0">
-                  <td class="py-2 text-slate-600">${new Date(inv.created_at).toLocaleDateString('en-GB')}</td>
-                  <td class="py-2 font-semibold text-slate-800">${inv.invoice_number}</td>
-                  <td class="py-2 text-right text-slate-600">₹${Number(inv.grand_total).toFixed(2)}</td>
-                  <td class="py-2 text-right font-bold text-red-600">₹${Number(inv.balance_due).toFixed(2)}</td>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="text-xs text-slate-500 uppercase border-b border-slate-200">
+                <tr>
+                  <th class="pb-2 text-left">Date / Bill</th>
+                  <th class="pb-2 text-right">Total</th>
+                  <th class="pb-2 text-right text-emerald-600">Paid</th>
+                  <th class="pb-2 text-right text-red-500">Balance</th>
                 </tr>
-              `).join('')}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                ${invoices.map(inv => {
+                  const total = Number(inv.grand_total || 0);
+                  const balance = Number(inv.balance_due || 0);
+                  const paid = total - balance;
+                  
+                  // Status styling
+                  let rowStyle = 'text-slate-700';
+                  if (balance <= 0) rowStyle = 'text-emerald-700 bg-emerald-50/30'; // Fully paid
+                  else if (paid > 0) rowStyle = 'text-amber-700 bg-amber-50/30'; // Partial
+                  else rowStyle = 'text-red-700 bg-red-50/30'; // Due
+
+                  return `
+                    <tr class="border-b border-slate-100 last:border-0 ${rowStyle}">
+                      <td class="py-2">
+                        <div class="font-bold">${inv.invoice_number}</div>
+                        <div class="text-[10px] text-slate-500">${new Date(inv.created_at).toLocaleDateString('en-GB')}</div>
+                      </td>
+                      <td class="py-2 text-right font-medium">₹${total.toFixed(2)}</td>
+                      <td class="py-2 text-right font-bold text-emerald-600">₹${paid.toFixed(2)}</td>
+                      <td class="py-2 text-right font-bold text-red-500">₹${balance.toFixed(2)}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
         `;
+
     } catch (err) {
         console.error(err);
         list.innerHTML = '<div class="text-center text-red-500 text-sm">Failed to load ledger.</div>';
@@ -864,6 +883,10 @@ function openSettleCreditModal(customer, onSuccess) {
         <input type="number" id="settle-amount" value="${balance.toFixed(2)}" max="${balance.toFixed(2)}" step="0.01" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500">
       </div>
       <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1">Discount (₹) - Optional</label>
+        <input type="number" id="settle-discount" value="0" min="0" step="0.01" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500">
+      </div>
+      <div>
         <label class="block text-xs font-semibold text-slate-600 mb-1">Payment Mode</label>
         <select id="settle-mode" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500">
             <option value="cash">Cash</option>
@@ -884,69 +907,85 @@ function openSettleCreditModal(customer, onSuccess) {
   card.querySelector('#btn-cancel-settle').onclick = () => overlay.remove();
 
   card.querySelector('#btn-confirm-settle').onclick = async () => {
-    const amt = Number(card.querySelector('#settle-amount').value);
+    let amtPaid = Number(card.querySelector('#settle-amount').value) || 0;
+    const disc = Number(card.querySelector('#settle-discount').value) || 0;
     const mode = card.querySelector('#settle-mode').value;
+    const totalCleared = amtPaid + disc;
     
-    if (!amt || amt <= 0 || amt > balance) {
-        if(window.toast) window.toast('Invalid amount', 'warn');
+    if (totalCleared <= 0 || totalCleared > balance) {
+        if(window.toast) window.toast('Invalid amount or discount exceeds balance', 'warn');
         return;
     }
 
     card.querySelector('#btn-confirm-settle').textContent = 'Saving...';
+    card.querySelector('#btn-confirm-settle').disabled = true;
 
     try {
-        // 1. Fetch unpaid credit invoices for this customer
+        // 1. Update Customer Balance
+        const newBal = Math.max(0, balance - totalCleared);
+        const { error: custErr } = await supabase.from('customers').update({ credit_balance: newBal }).eq('id', customer.id);
+        if (custErr) throw new Error('Customer balance update failed: ' + custErr.message);
+
+        // 2. Fetch unpaid invoices to apply payment
         const { data: unpaidInvoices } = await supabase.from('invoices')
             .select('id, balance_due, grand_total')
             .eq('customer_id', customer.id)
             .gt('balance_due', 0)
-            .eq('payment_method', 'credit'); // Or however your schema flags credit
+            .order('created_at', { ascending: true });
 
-        let remainingAmt = amt;
-        
-        // 2. Settle the invoices
+        let remainingToClear = totalCleared;
+        let cashToApply = amtPaid;
+
         if (unpaidInvoices && unpaidInvoices.length > 0) {
             for (const inv of unpaidInvoices) {
-                if (remainingAmt <= 0) break;
+                if (remainingToClear <= 0) break;
                 
                 const invDue = Number(inv.balance_due);
-                const payAmt = Math.min(remainingAmt, invDue);
-                
-                // Create the payment record for this specific invoice
-                await supabase.from('payments').insert({
-                    tenant_id: window.store.state.tenant.id,
-                    outlet_id: window.store.state.outlet.id,
-                    customer_id: customer.id,
-                    invoice_id: inv.id,
-                    mode: mode,
-                    amount: payAmt,
-                    status: 'success',
-                    reference_no: `Credit Settlement`,
-                    paid_at: new Date().toISOString(),
-                    cash_register_id: window.store.state.cashRegister?.id || null
-                });
+                const applyAmt = Math.min(remainingToClear, invDue);
+                const invNewBal = invDue - applyAmt;
 
-                // Update the invoice (only update balance_due)
-                await supabase.from('invoices').update({
-                    balance_due: invDue - payAmt
+                // Fetch current discount to add to it
+                const { data: curInv } = await supabase.from('invoices').select('discount_total').eq('id', inv.id).single();
+                const newDisc = Number(curInv?.discount_total || 0) + disc;
+
+                // Update the invoice with new balance and new discount
+                await supabase.from('invoices').update({ 
+                    balance_due: invNewBal,
+                    discount_total: newDisc
                 }).eq('id', inv.id);
 
-                remainingAmt -= payAmt;
+                // Record the actual cash payment for this invoice (so it hits Cashbook & Profitbook)
+                const actualCashForThisInvoice = Math.min(applyAmt, cashToApply);
+                if (actualCashForThisInvoice > 0) {
+                    await supabase.from('payments').insert({
+                        tenant_id: window.store.state.tenant.id,
+                        outlet_id: window.store.state.outlet.id,
+                        customer_id: customer.id,
+                        invoice_id: inv.id,
+                        mode: mode,
+                        amount: actualCashForThisInvoice,
+                        status: 'success',
+                        reference_no: `Partial Settlement`,
+                        paid_at: new Date().toISOString(),
+                        cash_register_id: window.store.state.cashRegister?.id || null
+                    });
+                    cashToApply -= actualCashForThisInvoice;
+                }
+
+                remainingToClear -= applyAmt;
             }
         }
 
-        // 3. Update the customer's global balance
-        await supabase.from('customers').update({
-            credit_balance: balance - amt
-        }).eq('id', customer.id);
-
-        if(window.toast) window.toast('Credit settled successfully', 'success');
+        if(window.toast) window.toast(`Settled ₹${totalCleared} successfully!`, 'success');
         overlay.remove();
-        if (typeof onSuccess === 'function') onSuccess();
-    } catch (err) {
+        
+        // Force a direct re-render of the Loyalty page
+        await renderLoyaltyAdmin(document.getElementById('app-view'));
+} catch (err) {
         console.error(err);
-        if(window.toast) window.toast('Failed to settle credit', 'error');
+        if(window.toast) window.toast('Failed to settle: ' + err.message, 'error');
         card.querySelector('#btn-confirm-settle').textContent = 'Confirm Payment';
+        card.querySelector('#btn-confirm-settle').disabled = false;
     }
   };
 }

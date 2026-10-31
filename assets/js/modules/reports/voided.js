@@ -1,3 +1,4 @@
+import { state, rangeStart, rangeEnd } from './helpers.js';
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, fmtMoney, toast } from '../../utils.js';
@@ -19,8 +20,8 @@ export async function renderVoidedItems() {
     const { data: kots, error } = await supabase.from('kots')
       .select('*, orders(order_number, table_name_snapshot), kot_items(*)')
       .eq('outlet_id', outletId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59')
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString())
       .order('created_at', { ascending: false });
 
     if (error) throw error;

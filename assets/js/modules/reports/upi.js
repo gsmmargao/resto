@@ -1,3 +1,4 @@
+import { state, rangeStart, rangeEnd } from './helpers.js';
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, fmtMoney, toast } from '../../utils.js';
@@ -18,45 +19,54 @@ export async function renderUPI() {
   try {
     // 1. Fetch Digital Sales (UPI/Card)
     const { data: payments } = await supabase.from('payments')
-      .select('amount, tip_amount, mode, paid_at')
+      .select('amount, tip_amount, mode, paid_at, reference_no')
       .eq('outlet_id', outletId)
       .in('mode', ['upi', 'card'])
       .eq('status', 'success')
-      .gte('paid_at', fromDate + 'T00:00:00')
-      .lte('paid_at', toDate + 'T23:59:59');
+      .gte('paid_at', rangeStart().toISOString())
+      .lte('paid_at', rangeEnd().toISOString());
+
+    // Fetch Digital Expenses
+    const { data: expData } = await supabase.from('expenses')
+      .select('*')
+      .eq('outlet_id', outletId)
+      .in('payment_mode', ['upi', 'card'])
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString());
 
     // 2. Fetch Digital Purchases (UPI/Card)
     const { data: periodQuick } = await supabase.from('purchases')
       .select('total, created_at')
       .eq('tenant_id', tenantId)
       .in('payment_mode', ['upi', 'card'])
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString());
 
     const { data: periodPOs } = await supabase.from('purchase_orders')
       .select('grand_total, created_at, po_number')
       .eq('tenant_id', tenantId)
       .in('payment_mode', ['upi', 'card'])
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString());
 
     // 3. Fetch Digital Supplier Payments (UPI/Card)
     const { data: supplierPays } = await supabase.from('supplier_payments')
       .select('*, suppliers(name)')
       .eq('tenant_id', tenantId)
       .in('payment_mode', ['upi', 'card'])
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString());
 
     // 4. Fetch Digital Tip Payouts (UPI/Card)
     const { data: tipPayouts } = await supabase.from('tip_payouts')
       .select('*')
       .eq('outlet_id', outletId)
       .in('payment_mode', ['upi', 'card'])
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString());
 
     let totalSales = 0;
+    let totalDuesPaid = 0;
     let totalTips = 0;
     let totalOut = 0;
     
@@ -66,14 +76,19 @@ export async function renderUPI() {
     (payments || []).forEach(p => {
       const amt = Number(p.amount || 0);
       const tip = Number(p.tip_amount || 0);
+      const isDues = p.reference_no && (p.reference_no.toLowerCase().includes('settle') || p.reference_no.toLowerCase().includes('credit'));
       
-      totalSales += amt;
+      if (isDues) {
+        totalDuesPaid += amt;
+      } else {
+        totalSales += amt;
+      }
       totalTips += tip;
 
       if (amt > 0) {
         ledgerIn.push({
           time: p.paid_at,
-          desc: `Digital Sale (${p.mode.toUpperCase()})`,
+          desc: isDues ? `Dues Settlement (${p.mode.toUpperCase()})` : `Digital Sale (${p.mode.toUpperCase()})`,
           amount: amt
         });
       }
@@ -104,6 +119,15 @@ export async function renderUPI() {
         desc: `Supplier Payment - ${p.suppliers?.name || 'Supplier'}`,
         amount: amt
       });
+    });
+
+    (expData || []).forEach(e => {
+        totalOut += Number(e.amount || 0);
+        ledgerOut.push({ 
+            time: e.created_at, 
+            desc: `Expense: ${e.category} ${e.staff_name ? '(' + e.staff_name + ')' : ''}`, 
+            amount: Number(e.amount || 0) 
+        });
     });
 
     (tipPayouts || []).forEach(t => {
@@ -141,8 +165,8 @@ export async function renderUPI() {
     wrapper.innerHTML = `
       <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
         
-        <!-- 4 KPI Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <!-- 5 KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-5 shadow-sm">
             <div class="text-indigo-800 text-xs uppercase tracking-widest font-bold">Net Digital Balance</div>
             <div class="text-3xl font-bold text-indigo-600 mt-1">₹${netBalance.toFixed(2)}</div>
@@ -150,6 +174,10 @@ export async function renderUPI() {
           <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-5 shadow-sm">
             <div class="text-emerald-800 text-xs uppercase tracking-widest font-bold">Digital Sales</div>
             <div class="text-3xl font-bold text-emerald-600 mt-1">₹${totalSales.toFixed(2)}</div>
+          </div>
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 shadow-sm">
+            <div class="text-amber-800 text-xs uppercase tracking-widest font-bold">Dues Settled</div>
+            <div class="text-3xl font-bold text-amber-600 mt-1">₹${totalDuesPaid.toFixed(2)}</div>
           </div>
           <div class="bg-purple-50 border border-purple-200 rounded-xl p-5 shadow-sm">
             <div class="text-purple-800 text-xs uppercase tracking-widest font-bold">Digital Tips</div>

@@ -3,32 +3,38 @@ import { store } from './store.js';
 import { $, el, toast, logoutAndReload } from './utils.js';
 import { getSession, signIn, signOut, loadContext, onAuthChange } from './auth.js';
 import { initRouter, register, navigate } from './router.js';
-import { renderDashboard } from './modules/dashboard.js';
-import { renderKDS } from './modules/kds.js';
-import { renderCash, loadOpenShift } from './modules/cash.js';
-import { renderUpiBook } from './modules/upi-book.js';
-import { renderReports } from './modules/reports.js?v=1793365677';
-import { renderTipsAdmin } from './modules/admin/tips-admin.js';
-import { renderStock } from './modules/stock.js';
-import { renderStoreKeeper } from './modules/storekeeper.js';
-import { renderMenuAdmin } from './modules/admin/menu-admin.js';
-import { renderStaffAdmin } from './modules/admin/staff-admin.js';
-import { renderFloorAdmin } from './modules/admin/floor-admin.js';
-import { renderSupplierAdmin } from './modules/admin/supplier-admin.js';
-import { renderPurchaseAdmin } from './modules/admin/purchase-admin.js';
-import { renderIngredientAdmin } from './modules/admin/ingredient-admin.js';
-import { renderRecipeAdmin } from './modules/admin/recipe-admin.js';
-import { renderLoyaltyAdmin } from './modules/admin/loyalty-admin.js';
-import { renderTemplateAdmin } from './modules/admin/template-admin.js';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import { buildOutletSwitcher } from './modules/outlet-switcher.js';
 import { startMonitoring, buildConnectionBadge, openQueueModal, sync } from './modules/offline-sync.js';
-import { renderCustomerDisplay } from './modules/customer-display.js';
-import { renderSignup } from './modules/signup.js';
-import { renderSuperAdmin } from './modules/admin/super-admin.js';
-import { renderBillingUpgrade } from './modules/admin/billing-upgrade.js';
+
+
+
+
 import { loadEntitlements, buildPlanBadge, maybeTrialBanner, isReadOnly, isTrialExpiringSoon, isTrialExpired } from './modules/entitlements.js';
 import { navigate as navTo } from './router.js';
 import { loadCatalog } from './modules/menu.js';
+
+// Dynamic import wrapper for loadOpenShift
+async function loadOpenShiftWrapper(...args) {
+  const module = await import('./modules/cash.js');
+  return module.loadOpenShift(...args);
+}
 
 function renderLogin(root) {
   root.innerHTML = '';
@@ -170,27 +176,27 @@ function renderShell(root) {
   shell.appendChild(view);
   root.appendChild(shell);
 
-  register('dashboard', renderDashboard);
-  register('kds', renderKDS);
-  register('cash', renderCash);
-  register('upi-book', renderUpiBook);
-  register('stock', renderStock);
-  register('stock-balance', renderStoreKeeper);
-  register('reports', renderReports);
-  register('tips-admin', renderTipsAdmin);
-  register('menu-admin', renderMenuAdmin);
-  register('staff-admin', renderStaffAdmin);
-  register('floor-admin', renderFloorAdmin);
-  register('supplier-admin', renderSupplierAdmin);
-  register('purchase-admin', renderPurchaseAdmin);
-  register('ingredient-admin', renderIngredientAdmin);
-  register('recipe-admin', renderRecipeAdmin);
-  register('loyalty-admin', renderLoyaltyAdmin);
-  register('template-admin', renderTemplateAdmin);
-  register('customer-display', renderCustomerDisplay);
-  register('signup', renderSignup);
-  register('super-admin', renderSuperAdmin);
-  register('billing-upgrade', renderBillingUpgrade);
+  register('dashboard', (root, params) => import('./modules/dashboard.js').then(m => m.renderDashboard(root, params)));
+  register('kds', (root, params) => import('./modules/kds.js').then(m => m.renderKDS(root, params)));
+  register('cash', (root, params) => import('./modules/cash.js').then(m => m.renderCash(root, params)));
+  register('upi-book', (root, params) => import('./modules/upi-book.js').then(m => m.renderUpiBook(root, params)));
+  register('stock', (root, params) => import('./modules/stock.js').then(m => m.renderStock(root, params)));
+  register('stock-balance', (root, params) => import('./modules/storekeeper.js').then(m => m.renderStoreKeeper(root, params)));
+  register('reports', (root, params) => import('./modules/reports/index.js').then(m => m.renderReports(root, params)));
+  register('tips-admin', (root, params) => import('./modules/admin/tips-admin.js').then(m => m.renderTipsAdmin(root, params)));
+  register('menu-admin', (root, params) => import('./modules/admin/menu-admin.js').then(m => m.renderMenuAdmin(root, params)));
+  register('staff-admin', (root, params) => import('./modules/admin/staff-admin.js').then(m => m.renderStaffAdmin(root, params)));
+  register('floor-admin', (root, params) => import('./modules/admin/floor-admin.js').then(m => m.renderFloorAdmin(root, params)));
+  register('supplier-admin', (root, params) => import('./modules/admin/supplier-admin.js').then(m => m.renderSupplierAdmin(root, params)));
+  register('purchase-admin', (root, params) => import('./modules/admin/purchase-admin.js').then(m => m.renderPurchaseAdmin(root, params)));
+  register('ingredient-admin', (root, params) => import('./modules/admin/ingredient-admin.js').then(m => m.renderIngredientAdmin(root, params)));
+  register('recipe-admin', (root, params) => import('./modules/admin/recipe-admin.js').then(m => m.renderRecipeAdmin(root, params)));
+  register('loyalty-admin', (root, params) => import('./modules/admin/loyalty-admin.js').then(m => m.renderLoyaltyAdmin(root, params)));
+  register('template-admin', (root, params) => import('./modules/admin/template-admin.js').then(m => m.renderTemplateAdmin(root, params)));
+  register('customer-display', (root, params) => import('./modules/customer-display.js').then(m => m.renderCustomerDisplay(root, params)));
+  register('signup', (root, params) => import('./modules/signup.js').then(m => m.renderSignup(root, params)));
+  register('super-admin', (root, params) => import('./modules/admin/super-admin.js').then(m => m.renderSuperAdmin(root, params)));
+  register('billing-upgrade', (root, params) => import('./modules/admin/billing-upgrade.js').then(m => m.renderBillingUpgrade(root, params)));
   
   initRouter('dashboard');
 }
@@ -208,8 +214,8 @@ async function boot() {
       if (session) {
         const ctx = await loadContext();
         if (ctx?.member) {
-          await loadCatalog();
-          await loadOpenShift();
+          loadCatalog().catch(err => console.error('Menu load failed:', err));
+          await loadOpenShiftWrapper();
           renderShell(root);
           return;
         }
@@ -252,8 +258,8 @@ async function boot() {
 
   startMonitoring();
 
-  await loadCatalog();
-  await loadOpenShift();
+  loadCatalog().catch(err => console.error('Menu load failed:', err));
+  await loadOpenShiftWrapper();
 
   renderShell(root);
 
@@ -268,8 +274,8 @@ onAuthChange(async (event) => {
     isRendered = true;
     const ctx = await loadContext();
     if (ctx?.member) {
-      await loadCatalog();
-      await loadOpenShift();
+      loadCatalog().catch(err => console.error('Menu load failed:', err));
+      await loadOpenShiftWrapper();
       renderShell($('#app'));
     }
   }

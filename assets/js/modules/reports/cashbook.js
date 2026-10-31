@@ -1,243 +1,177 @@
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
-import { el, fmtMoney, toast } from '../../utils.js';
-import { buildReceiptData, buildReceiptHTML } from '../receipt.js';
-import { buildReceiptBytes, printUSB, printHTML, isUSBConnected } from '../printer.js';
-import { openPersonLedgerModal } from './modals.js';
+import { el, fmtMoney } from '../../utils.js';
+import { state, rangeStart, rangeEnd } from './helpers.js';
 
 export async function renderCashbookDetailed() {
-  const wrapper = el('div', { class: 'w-full' });
-  wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Cashbook...</div>';
-  
-  const outletId = store.state.outlet?.id;
-  const tenantId = store.state.tenant?.id;
-  if (!outletId || !tenantId) return wrapper;
-
-  let fromDate = state.startDate || new Date().toISOString().split('T')[0];
-  let toDate = state.endDate || new Date().toISOString().split('T')[0];
+  const wrapper = el('div', { class: 'w-full space-y-6' });
+  const outletId = store.state.outlet.id;
+  const fromDate = state.startDate;
+  const toDate = state.endDate;
 
   try {
-    // Fetch Sales (In)
     const { data: payments } = await supabase.from('payments')
-      .select('amount, tip_amount, mode, paid_at')
+      .select('amount, tip_amount, mode, paid_at, reference_no')
       .eq('outlet_id', outletId)
-      .gte('paid_at', fromDate + 'T00:00:00')
-      .lte('paid_at', toDate + 'T23:59:59')
+      .gte('paid_at', rangeStart().toISOString())
+      .lte('paid_at', rangeEnd().toISOString())
       .eq('status', 'success')
-      .in('mode', ['cash', 'upi']);
+      .in('mode', ['cash', 'upi', 'card']);
 
-    // Fetch Supplier Payments (Out)
-    const { data: supplierPays } = await supabase.from('supplier_payments')
-      .select('*, suppliers(name)')
-      .eq('tenant_id', tenantId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59')
-      .in('payment_mode', ['cash', 'upi']);
-
-    // Fetch Cash Movements (Drawer)
-    const { data: cashMovements } = await supabase.from('cash_movements')
+    const { data: expenses } = await supabase.from('expenses')
       .select('*')
       .eq('outlet_id', outletId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
-
-    // Fetch Tip Payouts (Out) - This is the missing piece!
-    const { data: tipPayouts } = await supabase.from('tip_payouts')
-      .select('*')
-      .eq('outlet_id', outletId)
-      .gte('created_at', fromDate + 'T00:00:00')
-      .lte('created_at', toDate + 'T23:59:59');
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString());
 
     let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
     const ledger = [];
-    const personMap = new Map();
 
-    // 1. Process Sales
     (payments || []).forEach(p => {
       const amt = Number(p.amount || 0);
       const tip = Number(p.tip_amount || 0);
+      
       if (p.mode === 'cash') cashIn += (amt + tip);
-      if (p.mode === 'upi') upiIn += (amt + tip);
+      if (p.mode === 'upi' || p.mode === 'card') upiIn += (amt + tip);
       
-      if (amt > 0) ledger.push({ time: p.paid_at, type: 'sales', desc: `Bill Payment`, mode: p.mode, in: amt, out: 0 });
-      if (tip > 0) ledger.push({ time: p.paid_at, type: 'tip', desc: `Tip Collected`, mode: p.mode, in: tip, out: 0 });
-    });
-
-    // 2. Process Supplier Payments
-    (supplierPays || []).forEach(p => {
-      const amt = Number(p.amount);
-      if (p.payment_mode === 'cash') cashOut += amt;
-      if (p.payment_mode === 'upi') upiOut += amt;
-      ledger.push({ time: p.created_at, type: 'payment', desc: `Supplier Payment - ${p.suppliers?.name || 'Supplier'}`, mode: p.payment_mode, in: 0, out: amt });
-    });
-
-    // 3. Process Cash Movements (Drawer Withdrawals/Deposits)
-    const validCashMovements = (cashMovements || []).filter(m => {
-        const typeStr = (m.movement_type || '').toLowerCase();
-        // Skip supplier and tip_payout here, because we handle them above
-        if (typeStr.includes('tip_payout')) return false; 
-        const isSupplier = (m.person_name && m.person_name.toLowerCase() === 'supplier') ||
-                           (m.reason && (m.reason.toLowerCase().includes('supplier') || m.reason.toLowerCase().includes('purchase po')));
-        return !isSupplier;
-    });
-
-    validCashMovements.forEach(p => {
-      const amt = Number(p.amount || 0);
-      const typeStr = (p.movement_type || '').toLowerCase();
-      const isIn = typeStr.includes('in') || typeStr.includes('deposit');
-      const isOut = typeStr.includes('out') || typeStr.includes('withdraw');
-      
-      if (isIn) cashIn += amt;
-      if (isOut) cashOut += amt;
-
-      if (p.person_name) {
-        if (isOut) personMap.set(p.person_name, (personMap.get(p.person_name) || 0) + amt);
-        else if (isIn) personMap.set(p.person_name, (personMap.get(p.person_name) || 0) - amt);
-      }
-      
-      let desc = `Drawer ${isIn ? 'Deposit' : 'Withdrawal'}`;
-      if (p.person_name) desc += ` (${p.person_name})`;
-      if (p.reason && p.reason !== p.person_name) desc += ` - ${p.reason}`;
-
-      ledger.push({ time: p.created_at, type: 'drawer', desc: desc, mode: 'cash', in: isIn ? amt : 0, out: isOut ? amt : 0 });
-    });
-
-    // 4. Process Tip Payouts
-    (tipPayouts || []).forEach(t => {
-      const amt = Number(t.amount || 0);
-      if (t.payment_mode === 'cash') cashOut += amt;
-      if (t.payment_mode === 'upi') upiOut += amt;
-      
-      ledger.push({ 
-        time: t.created_at, 
-        type: 'tip_payout', 
-        desc: `Tip Payout to ${t.staff_name || 'Staff'}`, 
-        mode: t.payment_mode, 
-        in: 0, 
-        out: amt 
-      });
-    });
-
-    ledger.sort((a, b) => new Date(a.time) - new Date(b.time));
-    
-    let rowsHtml = '';
-    if (ledger.length === 0) {
-      rowsHtml = '<tr><td colspan="6" class="text-center py-8 text-slate-400 text-sm">No transactions</td></tr>';
-    } else {
-      rowsHtml = ledger.map(l => {
-        const inStr = l.in > 0 ? `+₹${l.in.toFixed(2)}` : (l.in === 0 ? '₹0.00' : '-');
-        const outStr = l.out > 0 ? `-₹${l.out.toFixed(2)}` : (l.out === 0 ? '₹0.00' : '-');
-        const modeClass = l.mode.toLowerCase() === 'cash' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700';
-        return `
-          <tr class="border-b border-slate-100 hover:bg-slate-50">
-            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(l.time).toLocaleString('en-GB', {dateStyle:'short', timeStyle:'short'})}</td>
-            <td class="px-4 py-3 text-sm text-slate-700 capitalize">${l.type.replace('_', ' ')}</td>
-            <td class="px-4 py-3 text-sm text-slate-600">${l.desc}</td>
-            <td class="px-4 py-3"><span class="px-2 py-1 rounded text-[10px] font-bold ${modeClass}">${l.mode.toUpperCase()}</span></td>
-            <td class="px-4 py-3 text-sm text-right text-emerald-600 font-medium">${inStr}</td>
-            <td class="px-4 py-3 text-sm text-right text-red-600 font-medium">${outStr}</td>
-          </tr>
-        `;
-      }).join('');
-    }
-
-    let personRowsHtml = '';
-    personMap.forEach((balance, name) => {
-      if (balance > 0) {
-        personRowsHtml += `
-          <tr class="border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition person-row" data-person="${name}">
-            <td class="px-4 py-3 font-bold text-indigo-600 underline">${name}</td>
-            <td class="px-4 py-3 text-right font-bold text-indigo-600">₹${balance.toFixed(2)}</td>
-          </tr>
-        `;
+      if (amt > 0) {
+        const isDues = p.reference_no && (p.reference_no.toLowerCase().includes('settle') || p.reference_no.toLowerCase().includes('credit'));
+        ledger.push({ 
+            time: p.paid_at, 
+            type: isDues ? 'Dues Paid' : 'Sales', 
+            desc: isDues ? `Dues Settlement` : `Bill Payment`, 
+            mode: p.mode.toUpperCase(), 
+            in: amt, 
+            out: 0 
+        });
       }
     });
-    if (!personRowsHtml) {
-      personRowsHtml = '<tr><td colspan="2" class="text-center py-4 text-slate-400 text-sm">No cash currently held by staff</td></tr>';
-    }
 
-    wrapper.innerHTML = `
-      <div class="max-w-6xl mx-auto space-y-6 pb-10 mt-4">
-        
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
-            <h3 class="font-bold text-slate-800 text-sm">Cash & UPI Ledger</h3>
-          </div>
-          <table class="w-full">
-            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
-              <tr>
-                <th class="text-left px-4 py-3 font-semibold">When</th>
-                <th class="text-left px-4 py-3 font-semibold">Type</th>
-                <th class="text-left px-4 py-3 font-semibold">Reference</th>
-                <th class="text-center px-4 py-3 font-semibold">Mode</th>
-                <th class="text-right px-4 py-3 font-semibold">In (₹)</th>
-                <th class="text-right px-4 py-3 font-semibold">Out (₹)</th>
-              </tr>
-            </thead>
-            <tbody>${rowsHtml}</tbody>
-          </table>
-        </div>
+    (expenses || []).forEach(e => {
+        const amt = Number(e.amount);
+        if (e.payment_mode === 'cash') cashOut += amt;
+        if (e.payment_mode === 'upi' || e.payment_mode === 'card') upiOut += amt;
+        ledger.push({
+            time: e.created_at,
+            type: 'Expense',
+            desc: `${e.category} ${e.staff_name ? '(' + e.staff_name + ')' : ''} ${e.custom_category ? '- ' + e.custom_category : ''}`,
+            mode: e.payment_mode.toUpperCase(),
+            in: 0,
+            out: amt
+        });
+    });
 
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
-            <h3 class="font-bold text-slate-800 text-sm">Summary by payment mode</h3>
-          </div>
-          <table class="w-full">
-            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
-              <tr>
-                <th class="text-left px-4 py-3 font-semibold">Mode</th>
-                <th class="text-right px-4 py-3 font-semibold">Total In</th>
-                <th class="text-right px-4 py-3 font-semibold">Total Out</th>
-                <th class="text-right px-4 py-3 font-semibold">Net Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b border-slate-100">
-                <td class="px-4 py-3 font-bold text-slate-700">Cash</td>
-                <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${cashIn.toFixed(2)}</td>
-                <td class="px-4 py-3 text-right text-red-600 font-medium">₹${cashOut.toFixed(2)}</td>
-                <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(cashIn - cashOut).toFixed(2)}</td>
-              </tr>
-              <tr>
-                <td class="px-4 py-3 font-bold text-slate-700">UPI</td>
-                <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${upiIn.toFixed(2)}</td>
-                <td class="px-4 py-3 text-right text-red-600 font-medium">₹${upiOut.toFixed(2)}</td>
-                <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(upiIn - upiOut).toFixed(2)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+    ledger.sort((a,b) => new Date(b.time) - new Date(a.time));
 
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          <div class="px-5 py-4 bg-indigo-50 border-b border-indigo-100">
-            <h3 class="font-bold text-indigo-800 text-sm">Cash Held by Person (Drawer Withdrawals)</h3>
-          </div>
-          <table class="w-full">
-            <thead class="bg-white text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-200">
-              <tr>
-                <th class="text-left px-4 py-3 font-semibold">Person Name</th>
-                <th class="text-right px-4 py-3 font-semibold">Amount Held</th>
-              </tr>
-            </thead>
-            <tbody>${personRowsHtml}</tbody>
-          </table>
-        </div>
+    // --- LEDGER & PAGINATION SETUP ---
+    let currentPage = 1;
+    const pageSize = 10;
+    const totalPages = Math.max(1, Math.ceil(ledger.length / pageSize));
 
+    const ledgerCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6' });
+    ledgerCard.innerHTML = `
+      <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+        <h3 class="font-bold text-slate-800 text-sm">Cash & UPI / Card Ledger</h3>
       </div>
+      <table class="w-full">
+        <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
+          <tr>
+            <th class="px-4 py-3 text-left">When</th>
+            <th class="px-4 py-3 text-left">Type</th>
+            <th class="px-4 py-3 text-left">Reference</th>
+            <th class="px-4 py-3 text-center">Mode</th>
+            <th class="px-4 py-3 text-right">In (₹)</th>
+            <th class="px-4 py-3 text-right">Out (₹)</th>
+          </tr>
+        </thead>
+        <tbody id="ledger-tbody"></tbody>
+      </table>
+      <div class="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-between items-center" id="pagination-controls"></div>
     `;
 
-    wrapper.querySelectorAll('.person-row').forEach(row => {
-      row.onclick = () => {
-        const pName = row.getAttribute('data-person');
-        const pMovements = validCashMovements.filter(m => m.person_name === pName);
-        openPersonLedgerModal(pName, pMovements);
-      };
-    });
+    const tbody = ledgerCard.querySelector('#ledger-tbody');
+    const paginationControls = ledgerCard.querySelector('#pagination-controls');
+
+    const updateTable = (page) => {
+        currentPage = page;
+        const start = (currentPage - 1) * pageSize;
+        const paginated = ledger.slice(start, start + pageSize);
+
+        tbody.innerHTML = paginated.length === 0 
+            ? '<tr><td colspan="6" class="text-center py-6 text-slate-400 text-sm">No transactions</td></tr>' 
+            : paginated.map(l => `
+                <tr class="border-b border-slate-50 hover:bg-slate-50">
+                  <td class="px-4 py-3 text-xs text-slate-500">${new Date(l.time).toLocaleString('en-GB')}</td>
+                  <td class="px-4 py-3 text-sm font-medium ${l.type === 'Dues Paid' ? 'text-amber-600' : l.type === 'Expense' ? 'text-red-600' : 'text-slate-700'}">${l.type}</td>
+                  <td class="px-4 py-3 text-sm text-slate-600">${l.desc}</td>
+                  <td class="px-4 py-3 text-center"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">${l.mode}</span></td>
+                  <td class="px-4 py-3 text-right text-emerald-600 font-medium">${l.in > 0 ? '+₹' + l.in.toFixed(2) : '₹0.00'}</td>
+                  <td class="px-4 py-3 text-right text-red-600 font-medium">${l.out > 0 ? '-₹' + l.out.toFixed(2) : '₹0.00'}</td>
+                </tr>
+            `).join('');
+
+        const prevDisabled = currentPage === 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer';
+        const nextDisabled = currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer';
+
+        paginationControls.innerHTML = `
+            <span class="text-xs text-slate-500">Showing ${ledger.length === 0 ? 0 : start + 1} to ${Math.min(start + pageSize, ledger.length)} of ${ledger.length} entries</span>
+            <div class="flex items-center gap-2">
+                <button id="btn-prev" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 ${prevDisabled} transition">Prev</button>
+                <span class="text-xs font-bold text-slate-700">Page ${currentPage} of ${totalPages}</span>
+                <button id="btn-next" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 ${nextDisabled} transition">Next</button>
+            </div>
+        `;
+
+        if (currentPage > 1) {
+            paginationControls.querySelector('#btn-prev').onclick = () => updateTable(currentPage - 1);
+        }
+        if (currentPage < totalPages) {
+            paginationControls.querySelector('#btn-next').onclick = () => updateTable(currentPage + 1);
+        }
+    };
+
+    updateTable(1); // Initialize first page
+
+    wrapper.appendChild(ledgerCard);
+
+    // --- SUMMARY SECTION ---
+    const summaryCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden' });
+    summaryCard.innerHTML = `
+      <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+        <h3 class="font-bold text-slate-800 text-sm">Summary by payment mode</h3>
+      </div>
+      <table class="w-full">
+        <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
+          <tr>
+            <th class="px-4 py-3 text-left">Mode</th>
+            <th class="px-4 py-3 text-right">Total In</th>
+            <th class="px-4 py-3 text-right">Total Out</th>
+            <th class="px-4 py-3 text-right">Net Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="border-b border-slate-50">
+            <td class="px-4 py-3 font-bold text-slate-700">Cash</td>
+            <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${cashIn.toFixed(2)}</td>
+            <td class="px-4 py-3 text-right text-red-600 font-medium">₹${cashOut.toFixed(2)}</td>
+            <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(cashIn - cashOut).toFixed(2)}</td>
+          </tr>
+          <tr class="border-b border-slate-50">
+            <td class="px-4 py-3 font-bold text-slate-700">UPI / Card</td>
+            <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${upiIn.toFixed(2)}</td>
+            <td class="px-4 py-3 text-right text-red-600 font-medium">₹${upiOut.toFixed(2)}</td>
+            <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(upiIn - upiOut).toFixed(2)}</td>
+          </tr>
+        </tbody>
+      </table>
+    `;
+
+    wrapper.appendChild(summaryCard);
 
   } catch (err) {
     console.error(err);
     wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
   }
+
   return wrapper;
 }
-

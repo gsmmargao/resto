@@ -1,7 +1,7 @@
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, fmtMoney, toast } from '../../utils.js';
-import { buildReceiptData, buildReceiptHTML } from '../receipt.js';
+import { buildReceiptData, buildReceiptHTML } from '../receipt.js?v=1793466117';
 import { buildReceiptBytes, printUSB, printHTML, isUSBConnected } from '../printer.js';
 
 export function openPersonLedgerModal(name, movements) {
@@ -153,21 +153,73 @@ export async function openBillReprintModal(invoiceId) {
   }
 }
 
-export function openModeToggleModal(invoiceId, currentMode) {
+export async function openModeToggleModal(invoiceId, currentMode) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
   const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4' });
   
   card.appendChild(el('h3', { class: 'text-xl font-bold text-slate-800' }, 'Update Payment Mode'));
-  card.appendChild(el('p', { class: 'text-sm text-slate-500' }, 'Select the correct mode for this bill. This will instantly update the Cash and UPI books.'));
+  card.appendChild(el('p', { class: 'text-sm text-slate-500' }, 'Select the correct mode. If mapping to Credit, assign a customer.'));
 
-  const btnContainer = el('div', { class: 'grid grid-cols-3 gap-3 pt-2 pb-2' });
+  // Fetch ALL customers for the tenant (removed strict outlet_id filter)
+  const { data: customers, error: custErr } = await supabase.from('customers')
+    .select('id, name')
+    .eq('tenant_id', window.store.state.tenant.id);
+  
+  if (custErr) console.error("Error fetching customers:", custErr);
+
+  const customerDiv = el('div', { class: 'hidden text-left mt-2' }, [
+    el('label', { class: 'text-xs font-bold text-slate-600' }, 'Select Customer'),
+    el('select', { id: 'map-customer-select', class: 'w-full mt-1 p-2 border border-slate-300 rounded-lg text-sm' }, [
+      el('option', { value: '' }, '-- Select Customer --'),
+      ...(customers || []).map(c => el('option', { value: c.id }, c.name))
+    ])
+  ]);
+
+  const btnContainer = el('div', { class: 'grid grid-cols-2 gap-2 pt-2 pb-2' });
   
   const handleSelect = async (newMode) => {
+    const custId = document.getElementById('map-customer-select').value;
+    if (newMode === 'credit' && !custId) {
+      toast('Please select a customer for Credit bills.', 'warn');
+      return;
+    }
+
     try {
       overlay.remove();
       toast('Updating...', 'info', 1000);
-      const { error } = await supabase.from('payments').update({ mode: newMode }).eq('invoice_id', invoiceId);
-      if (error) throw error;
+      
+      // 1. Update payment mode
+      await supabase.from('payments').update({ 
+        mode: newMode,
+        customer_id: newMode === 'credit' ? custId : null 
+      }).eq('invoice_id', invoiceId);
+
+      // 2. Get invoice amount
+      const { data: inv } = await supabase.from('invoices').select('grand_total, customer_id').eq('id', invoiceId).single();
+
+      if (newMode === 'credit') {
+         // 3. Add to Customer's Credit Balance
+         const { data: cust } = await supabase.from('customers').select('credit_balance').eq('id', custId).single();
+         const newBal = Number(cust.credit_balance || 0) + Number(inv.grand_total);
+         await supabase.from('customers').update({ credit_balance: newBal }).eq('id', custId);
+
+         // 4. Update Invoice
+         await supabase.from('invoices').update({
+             customer_id: custId,
+             balance_due: Number(inv.grand_total)
+         }).eq('id', invoiceId);
+      } else {
+         // If switching AWAY from credit, we should subtract from the old customer's balance
+         if (inv.customer_id) {
+             const { data: oldCust } = await supabase.from('customers').select('credit_balance').eq('id', inv.customer_id).single();
+             if (oldCust) {
+                 const newBal = Math.max(0, Number(oldCust.credit_balance || 0) - Number(inv.grand_total));
+                 await supabase.from('customers').update({ credit_balance: newBal }).eq('id', inv.customer_id);
+             }
+         }
+         await supabase.from('invoices').update({ balance_due: 0 }).eq('id', invoiceId);
+      }
+
       toast(`Mode changed to ${newMode.toUpperCase()}`, 'success');
       setTimeout(() => window.location.reload(), 800);
     } catch (err) {
@@ -179,25 +231,44 @@ export function openModeToggleModal(invoiceId, currentMode) {
   const modes = [
     { id: 'cash', label: '💵 Cash', color: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' },
     { id: 'upi',  label: '📱 UPI',  color: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100' },
-    { id: 'card', label: '💳 Card', color: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' }
+    { id: 'card', label: '💳 Card', color: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' },
+    { id: 'credit', label: '📝 Credit', color: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' }
   ];
 
   modes.forEach(m => {
-    const isActive = currentMode.toLowerCase() === m.id;
+    const isActive = currentMode.toLowerCase().includes(m.id);
     btnContainer.appendChild(el('button', {
       class: `py-3 rounded-xl border-2 font-bold transition flex flex-col items-center justify-center gap-1 ${isActive ? 'ring-2 ring-offset-2 ring-slate-400 ' + m.color : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-600'}`,
       onclick: () => {
-        if (currentMode.toLowerCase() === m.id) overlay.remove();
-        else handleSelect(m.id);
+        if (m.id === 'credit') {
+            customerDiv.classList.remove('hidden');
+        } else {
+            customerDiv.classList.add('hidden');
+            handleSelect(m.id);
+        }
       }
     }, [
-      el('span', { class: 'text-2xl' }, m.label.split(' ')[0]),
-      el('span', { class: 'text-xs uppercase tracking-wide' }, m.id)
+      el('span', { class: 'text-lg' }, m.label.split(' ')[0]),
+      el('span', { class: 'text-[10px] uppercase tracking-wide' }, m.id)
     ]));
   });
 
   card.appendChild(btnContainer);
-  card.appendChild(el('button', { class: 'w-full py-2.5 rounded-lg text-slate-500 hover:bg-slate-100 text-sm font-medium transition', onclick: () => overlay.remove() }, 'Cancel'));
+  card.appendChild(customerDiv);
+  
+  const confirmBtn = el('button', { class: 'w-full py-2.5 rounded-lg bg-emerald-600 text-white font-semibold text-sm hidden mt-2', onclick: () => handleSelect('credit') }, 'Confirm Credit Mapping');
+  card.appendChild(confirmBtn);
+  
+  // Show confirm button when a customer is selected
+  customerDiv.addEventListener('change', (e) => {
+      if (e.target.value) {
+          confirmBtn.classList.remove('hidden');
+      } else {
+          confirmBtn.classList.add('hidden');
+      }
+  });
+
+  card.appendChild(el('button', { class: 'w-full py-2.5 rounded-lg text-slate-500 hover:bg-slate-100 text-sm font-medium transition mt-2', onclick: () => overlay.remove() }, 'Cancel'));
   overlay.appendChild(card);
   document.body.appendChild(overlay);
 }

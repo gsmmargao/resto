@@ -354,6 +354,30 @@ function openMemberEditor(root, member) {
     ROLES.map(r => el('option', { value: r.id, selected: member.role === r.id ? true : null }, r.label)));
   body.appendChild(el('div', {}, [label('Role'), roleSel]));
 
+  // --- LOGIN ID & PASSWORD MANAGEMENT ---
+  const staffEmail = member.email || (member.user && member.user.email) || '';
+  const emailIn = el('input', { 
+      type: 'email', 
+      value: staffEmail, 
+      class: inputCls,
+      placeholder: 'staff@restaurant.com'
+  });
+  
+  const pwdIn = el('input', { 
+      type: 'password', 
+      class: inputCls,
+      placeholder: 'Leave blank to keep current'
+  });
+
+  body.appendChild(el('div', { class: 'pt-3 mt-3 border-t border-slate-100' }, [
+      el('div', { class: 'grid grid-cols-2 gap-3' }, [
+          el('div', {}, [label('Login ID (Email)'), emailIn]),
+          el('div', {}, [label('New Password'), pwdIn])
+      ]),
+      el('div', { class: 'text-xs text-slate-500 mt-1' }, 'Only enter a password if you want to change it.')
+  ]));
+  // --------------------------------------
+
   card.appendChild(body);
 
   const footer = el('div', { class: 'px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between rounded-b-2xl' }, [
@@ -400,6 +424,27 @@ function openMemberEditor(root, member) {
 
       const { error } = await supabase.from('tenant_members').update(patch).eq('id', member.id);
       if (error) throw error;
+
+      // --- NEW EDGE FUNCTION LOGIC ---
+      const newEmail = emailIn.value.trim();
+      const newPassword = pwdIn.value.trim();
+
+      if ((newEmail && newEmail !== staffEmail) || newPassword) {
+          const authUserId = member.user_id; 
+          if (!authUserId) throw new Error('No Auth User ID linked to this staff member.');
+
+          const { data, error: fnError } = await supabase.functions.invoke('admin-update-user', {
+              body: {
+                  user_id: authUserId,
+                  email: newEmail !== staffEmail ? newEmail : undefined,
+                  password: newPassword || undefined
+              }
+          });
+
+          if (fnError) throw fnError;
+          if (data && data.error) throw new Error(data.error);
+      }
+      // -------------------------------
 
       toast('Changes saved', 'success');
       overlay.remove();

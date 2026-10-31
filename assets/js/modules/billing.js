@@ -312,8 +312,26 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
             reference: state.reference
           }];
 
+          // 1. Process the payment (saves invoice, records payments, clears cart, navigates)
           await completePayment(orderId, totals, state.customer, payments, tipAmount);
           overlay.remove();
+
+          // 2. Automatically release the table back to 'available'
+          const cart = window.store.state.cart;
+          if (cart.tableId) {
+              // Update the database
+              await supabase.from('dining_tables').update({ status: 'available' }).eq('id', cart.tableId);
+              
+              // Update local state instantly so the floor plan turns green without a reload
+              const tableInState = window.store.state.tables.find(t => t.id === cart.tableId);
+              if (tableInState) tableInState.status = 'available';
+              
+              // Reset the cart's tableId
+              window.store.state.cart.tableId = null;
+              
+              // Trigger the floor plan to re-render
+              window.dispatchEvent(new CustomEvent('floorplan:reload'));
+          }
         } catch (err) {
           console.error(err);
           if(window.toast) window.toast('Payment failed: ' + err.message, 'error');
@@ -346,6 +364,9 @@ async function completePayment(orderId, totals, customer, payments, tipAmount) {
       taxable_value: Number(totals.taxable), cgst: round2(Number(totals.tax) / 2),
       sgst: round2(Number(totals.tax) / 2), igst: 0, service_charge: Number(totals.serviceCharge || 0),
       round_off: Number(totals.roundOff || 0), grand_total: grand,
+        discount_type: window.store.state.cart.discountType || 'amount',
+        discount_value: window.store.state.cart.discountValue || 0,
+        discount_amount: (window.store.state.cart.discountType === 'percent' ? (window.store.state.cart.gross * (window.store.state.cart.discountValue / 100)) : window.store.state.cart.discountValue),
       tip_amount: Number(tipAmount || 0), paid_at: new Date().toISOString(),
       payments: payments.map(p => ({
         mode: p.mode, amount: Number(p.amount), tip_amount: 0,

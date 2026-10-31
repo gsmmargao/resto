@@ -69,7 +69,9 @@ export async function saveInvoiceAndPayments({ orderId, totals, customer, paymen
   const igst = 0;
 
   const totalPaid    = round2(payments.reduce((s, p) => s + Number(p.amount || 0), 0));
+  const actualCashPaid = round2(payments.filter(p => p.mode !== 'credit').reduce((s, p) => s + Number(p.amount || 0), 0));
   const grandWithTip = round2(totals.grand + Number(tipAmount || 0));
+  const isCredit     = payments.some(p => p.mode === 'credit');
 
   // 6. Insert invoice
   const { data: invoice, error: invErr } = await supabase.from('invoices').insert({
@@ -93,9 +95,9 @@ export async function saveInvoiceAndPayments({ orderId, totals, customer, paymen
     service_charge:   round2(totals.serviceCharge),
     round_off:        round2(totals.roundOff),
     grand_total:      grandWithTip,
-    amount_paid:      totalPaid,
-    balance_due:      round2(grandWithTip - totalPaid),
-    status:           totalPaid >= grandWithTip - 0.01 ? 'paid' : 'partially_paid',
+    amount_paid:      actualCashPaid,
+    balance_due:      round2(grandWithTip - actualCashPaid),
+    status:           actualCashPaid >= grandWithTip - 0.01 ? 'paid' : 'partially_paid',
     created_by:       session?.user?.id || null,
   }).select().single();
   if (invErr) throw invErr;

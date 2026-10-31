@@ -93,6 +93,13 @@ export async function fetchMovements(shiftId) {
     .eq('status', 'success')
     .eq('is_refund', false);
 
+  // Fetch Cash Expenses
+  const { data: expData } = await supabase.from('expenses')
+    .select('id, amount, category, staff_name, created_at')
+    .eq('outlet_id', store.state.outlet.id)
+    .eq('payment_mode', 'cash')
+    .gte('created_at', shift.opened_at);
+
   // 3. Fetch Tip Payouts
   let tipPayouts = [];
   if (shift && shift.opened_at) {
@@ -109,11 +116,14 @@ export async function fetchMovements(shiftId) {
   
   (pData || []).forEach(p => {
       if (Number(p.amount) > 0) {
+          const ref = (p.reference_no || '').toLowerCase();
+          const isDues = ref.includes('settle') || ref.includes('credit');
           merged.push({
               id: p.id,
-              movement_type: 'sale',
+              movement_type: isDues ? 'due_paid' : 'sale',
               amount: p.amount,
-              reason: `Bill Payment`,
+              mode: p.mode,
+              reason: isDues ? `Dues Paid` : `Bill Payment`,
               created_at: p.paid_at
           });
       }
@@ -126,6 +136,16 @@ export async function fetchMovements(shiftId) {
               created_at: p.paid_at
           });
       }
+  });
+
+  (expData || []).forEach(e => {
+      merged.push({
+          id: e.id,
+          movement_type: 'expense',
+          amount: e.amount,
+          reason: `Expense: ${e.category} ${e.staff_name ? '(' + e.staff_name + ')' : ''}`,
+          created_at: e.created_at
+      });
   });
 
   tipPayouts.forEach(t => {
@@ -224,8 +244,6 @@ export async function addCashMovement({ type, amount, reason, person_name }) {
 export async function closeShift({ countedCash, notes }) {
   const shift = store.state.cashRegister;
   if (!shift) throw new Error('No open shift');
-  const totals = await fetchShiftTotals(shift.id);
-  const movements = await fetchMovements(shift.id);
   const expected = computeExpectedCash(shift, totals, movements);
   const difference = Math.round((Number(countedCash) - expected) * 100) / 100;
 
@@ -336,9 +354,15 @@ function renderNoShiftPanel(root) {
 async function renderActiveShiftPanel(root, shift) {
   const totals = await fetchShiftTotals(shift.id);
   const movements = await fetchMovements(shift.id);
-  
-  const inSum = movements.filter(m => ['cash_in', 'sale', 'tip_in'].includes(m.movement_type)).reduce((s, m) => s + Number(m.amount), 0);
-  const outSum = movements.filter(m => ['cash_out', 'tip_payout', 'bank_deposit', 'petty_expense'].includes(m.movement_type)).reduce((s, m) => s + Number(m.amount), 0);
+  const totalDuesPaid = movements.filter(m => m.movement_type === 'due_paid').reduce((s, m) => s + Number(m.amount), 0);
+  const duesPaidDigital = movements.filter(m => m.movement_type === 'due_paid' && ['upi', 'card', 'wallet'].includes(m.mode)).reduce((s, m) => s + Number(m.amount), 0);
+  const freshCashTotal = totals.cash - totalDuesPaid;
+  const freshDigitalSales = (totals.card + totals.upi + totals.wallet) - duesPaidDigital;
+  const freshSalesTotal = totals.total - totalDuesPaid;
+
+
+  const inSum = movements.filter(m => ['cash_in', 'sale', 'tip_in', 'due_paid'].includes(m.movement_type)).reduce((s, m) => s + Number(m.amount), 0);
+  const outSum = movements.filter(m => ['cash_out', 'tip_payout', 'bank_deposit', 'petty_expense', 'expense'].includes(m.movement_type)).reduce((s, m) => s + Number(m.amount), 0);
   
   const expected = Number(shift.opening_balance || 0) + inSum - outSum;
 
@@ -355,12 +379,13 @@ async function renderActiveShiftPanel(root, shift) {
     ]),
   ]));
 
-  const grid = el('div', { class: 'grid grid-cols-2 md:grid-cols-5 gap-px bg-slate-200' });
+const grid = el('div', { class: 'grid grid-cols-2 md:grid-cols-6 gap-px bg-slate-200' });
   grid.appendChild(statBox('Opening Float', fmtMoney(shift.opening_balance), 'text-slate-700'));
-  grid.appendChild(statBox('Cash Sales', fmtMoney(totals.cash), 'text-emerald-600'));
-  grid.appendChild(statBox('Digital Sales', fmtMoney(totals.card + totals.upi + totals.wallet + totals.other), 'text-indigo-600'));
+  grid.appendChild(statBox('Cash Sales', fmtMoney(freshCashTotal), 'text-emerald-600'));
+  grid.appendChild(statBox('Digital Sales', fmtMoney(freshDigitalSales), 'text-indigo-600'));
+  grid.appendChild(statBox('Dues Settled', fmtMoney(totalDuesPaid), 'text-amber-600'));
   grid.appendChild(statBox('Tips Collected', fmtMoney(totals.tips || 0), 'text-purple-600'));
-  grid.appendChild(statBox('Total Sales', fmtMoney(totals.total), 'text-slate-900', `${totals.count} transactions`));
+  grid.appendChild(statBox('Total Sales', fmtMoney(freshSalesTotal), 'text-slate-900', `${totals.count} transactions`));
   card.appendChild(grid);
 
   const cashRow = el('div', { class: 'p-5 grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-slate-200' });
@@ -390,6 +415,7 @@ function kvBlock(label, value, valueCls = 'text-slate-800', sub = '') {
 
 async function renderMovementsPanel(root, shift) {
   const movements = await fetchMovements(shift.id);
+  
   const card = el('div', { class: 'bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden' });
   card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 flex items-center justify-between' }, [
     el('h3', { class: 'font-semibold text-slate-800' }, 'Cash Movements'),
@@ -407,6 +433,10 @@ async function renderMovementsPanel(root, shift) {
     
     let label = m.movement_type.replace('_', ' ').toUpperCase();
     if (m.movement_type === 'sale') label = 'BILL SALE';
+    if (m.movement_type === 'due_paid') label = 'DUES PAID';
+    if (m.movement_type === 'expense') label = 'EXPENSE';
+    
+    
     if (m.movement_type === 'tip_in') label = 'TIP COLLECTED';
     if (m.movement_type === 'tip_payout') label = 'TIP PAYOUT';
 
@@ -489,7 +519,7 @@ async function renderHistoryPanel() {
   return card;
 }
 
-function openAddMovementModal(root, shift) {
+async function openAddMovementModal(root, shift) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4' });
   const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4' });
 
@@ -502,21 +532,55 @@ function openAddMovementModal(root, shift) {
 
   const amountIn = el('input', { type: 'number', step: '0.01', min: '0', placeholder: 'Amount (₹)', class: inputCls });
   
-  const nameIn = el('input', { type: 'text', placeholder: 'Person Name (Who took the cash?)', class: inputCls, list: 'cash_movement_names', autocomplete: 'off' });
-  const datalist = document.createElement('datalist');
-  datalist.id = 'cash_movement_names';
+  const nameWrapper = el('div', { class: 'relative' });
+  const nameIn = el('input', { type: 'text', placeholder: 'Person Name (Who took the cash?)', class: inputCls, autocomplete: 'off' });
+  const dropdownList = el('div', { class: 'absolute z-50 w-full mt-1 bg-white border border-slate-300 rounded-lg shadow-xl max-h-40 overflow-y-auto hidden' });
   
-  if (window.supabase && store.state.outlet) {
-      window.supabase.from('cash_movements').select('person_name').eq('outlet_id', store.state.outlet.id).not('person_name', 'is', null).then(({data}) => {
-          if (data) {
-              [...new Set(data.map(d => d.person_name).filter(Boolean))].forEach(n => {
-                  const opt = document.createElement('option');
-                  opt.value = n;
-                  datalist.appendChild(opt);
-              });
-          }
-      });
+  let allNames = [];
+
+  try {
+      const { data: movements } = await supabase.from('cash_movements').select('person_name').eq('outlet_id', store.state.outlet.id).not('person_name', 'is', null);
+      if (movements) {
+          allNames = [...new Set(movements.map(d => d.person_name).filter(Boolean))];
+      }
+  } catch (err) {
+      console.error("❌ Failed to fetch names:", err);
   }
+
+  const updateDropdown = (filterText) => {
+    dropdownList.innerHTML = '';
+    const filtered = allNames.filter(n => n.toLowerCase().includes(filterText.toLowerCase()));
+    
+    if (filtered.length === 0) {
+      dropdownList.classList.add('hidden');
+      return;
+    }
+
+    filtered.forEach(name => {
+      const item = el('div', { 
+        class: 'px-3 py-2 cursor-pointer hover:bg-slate-100 text-sm text-slate-700 border-b border-slate-50 last:border-0',
+        onclick: () => {
+          nameIn.value = name;
+          dropdownList.classList.add('hidden');
+        }
+      }, name);
+      dropdownList.appendChild(item);
+    });
+    
+    dropdownList.classList.remove('hidden');
+  };
+
+  nameIn.addEventListener('input', (e) => updateDropdown(e.target.value));
+  nameIn.addEventListener('focus', (e) => updateDropdown(e.target.value));
+
+  document.addEventListener('click', (e) => {
+    if (!nameWrapper.contains(e.target)) {
+      dropdownList.classList.add('hidden');
+    }
+  });
+
+  nameWrapper.appendChild(nameIn);
+  nameWrapper.appendChild(dropdownList);
 
   const reasonIn = el('input', { type: 'text', placeholder: 'Reason / reference', class: inputCls });
 
@@ -540,13 +604,12 @@ function openAddMovementModal(root, shift) {
           e.currentTarget.textContent = 'Save';
         }
       }
-    }, 'Save'),
+    }, 'Save')
   ]);
 
   card.appendChild(typeIn);
   card.appendChild(amountIn);
-  card.appendChild(nameIn);
-  card.appendChild(datalist);
+  card.appendChild(nameWrapper);
   card.appendChild(reasonIn);
   card.appendChild(btnRow);
 
@@ -684,7 +747,7 @@ function showCloseReceipt(root, result) {
     ]);
 
   body.appendChild(row('Opening Float', fmtMoney(shift.opening_balance)));
-  body.appendChild(row('Cash Sales', fmtMoney(totals.cash), 'text-emerald-600'));
+  body.appendChild(row('Cash Sales', fmtMoney(freshCashTotal), 'text-emerald-600'));
   body.appendChild(row('Card Sales', fmtMoney(totals.card)));
   body.appendChild(row('UPI Sales', fmtMoney(totals.upi)));
   body.appendChild(row('Wallet Sales', fmtMoney(totals.wallet)));
