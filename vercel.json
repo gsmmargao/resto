@@ -1,5 +1,9 @@
 {
   "installCommand": "npm install && npm install --no-save --platform=linuxmusl --arch=x64 lightningcss @tailwindcss/oxide",
   "buildCommand": "npm run build",
-  "framework": null
+  "framework": null,
+  "env": {
+    "npm_config_target_platform": "linuxmusl",
+    "npm_config_target_arch": "x64"
+  }
 }
