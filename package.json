@@ -44,5 +44,11 @@
     "source-map-js": "^1.2.2",
     "tapable": "^2.3.3",
     "to-regex-range": "^5.0.1"
+  },
+  "optionalDependencies": {
+    "lightningcss-linux-x64-gnu": "^1.33.0",
+    "lightningcss-linux-x64-musl": "^1.33.0",
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.3",
+    "@tailwindcss/oxide-linux-x64-musl": "^4.3.3"
   }
 }

@@ -1,9 +1,5 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": null,
-  "buildCommand": "echo 'no build'",
-  "outputDirectory": ".",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  "installCommand": "npm install && npm install --no-save --platform=linuxmusl --arch=x64 lightningcss @tailwindcss/oxide",
+  "buildCommand": "npm run build",
+  "framework": null
 }
