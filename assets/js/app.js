@@ -28,7 +28,7 @@ import { startMonitoring, buildConnectionBadge, openQueueModal, sync } from './m
 
 import { loadEntitlements, buildPlanBadge, maybeTrialBanner, isReadOnly, isTrialExpiringSoon, isTrialExpired } from './modules/entitlements.js';
 import { navigate as navTo } from './router.js';
-import { loadCatalog } from './modules/menu.js?v=15c8921447';
+import { loadCatalog } from './modules/menu.js?v=698988f56b';
 
 // Dynamic import wrapper for loadOpenShift
 async function loadOpenShiftWrapper(...args) {

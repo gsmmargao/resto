@@ -14,6 +14,12 @@ export async function renderProfitBook() {
   try {
     // 1. Fetch actual payments (this is the true realized revenue)
     const { data: expData } = await supabase.from('expenses').select('amount').eq('outlet_id', outletId).gte('created_at', from).lte('created_at', to);
+    
+    // Fetch supplier data for outstanding balance
+    const { data: poData } = await supabase.from('purchase_orders').select('grand_total, supplier_id').eq('tenant_id', store.state.tenant.id);
+    const { data: quickData } = await supabase.from('purchases').select('total, supplier_id').eq('tenant_id', store.state.tenant.id);
+    const { data: supPayData } = await supabase.from('supplier_payments').select('amount, supplier_id').eq('tenant_id', store.state.tenant.id);
+
     const { data: payData, error } = await supabase.from('payments')
       .select('amount, tip_amount, mode, reference_no, invoice_id, paid_at, invoices(invoice_number)')
       .eq('outlet_id', outletId)
@@ -27,6 +33,12 @@ export async function renderProfitBook() {
     const totalRevenue = validPays.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const totalTips = validPays.reduce((sum, p) => sum + Number(p.tip_amount || 0), 0);
     const totalExpenses = (expData || []).reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    
+    // Calculate supplier outstanding balance (Total Purchases - Total Payments)
+    const totalPurchases = (poData || []).reduce((s, p) => s + Number(p.grand_total || 0), 0) 
+                         + (quickData || []).reduce((s, p) => s + Number(p.total || 0), 0);
+    const totalSupplierPayments = (supPayData || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+    const supplierOutstanding = Math.max(0, totalPurchases - totalSupplierPayments);
 
     // Group payments by invoice for the table
     const invoiceMap = {};
@@ -46,7 +58,7 @@ export async function renderProfitBook() {
 
     wrapper.innerHTML = `
       <div class="max-w-7xl mx-auto space-y-6">
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <div class="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm">
             <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Revenue (Realized)</div>
             <div class="text-3xl font-bold text-slate-800 mt-1">₹${totalRevenue.toFixed(2)}</div>
@@ -60,9 +72,14 @@ export async function renderProfitBook() {
             <div class="text-red-800 text-xs uppercase tracking-widest font-bold">Total Expenses</div>
             <div class="text-3xl font-bold text-red-600 mt-1">₹${totalExpenses.toFixed(2)}</div>
           </div>
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 shadow-sm">
+            <div class="text-amber-800 text-xs uppercase tracking-widest font-bold">Supplier Dues</div>
+            <div class="text-3xl font-bold text-amber-600 mt-1">₹${supplierOutstanding.toFixed(2)}</div>
+            <div class="text-xs text-amber-500 mt-1">Unpaid to vendors</div>
+          </div>
           <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm text-white">
             <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Net Profit</div>
-            <div class="text-3xl font-bold text-emerald-400 mt-1">₹${(totalRevenue + totalTips - totalExpenses).toFixed(2)}</div>
+            <div class="text-3xl font-bold text-emerald-400 mt-1">₹${(totalRevenue + totalTips - totalExpenses - supplierOutstanding).toFixed(2)}</div>
           </div>
         </div>
 

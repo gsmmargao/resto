@@ -241,10 +241,10 @@ export async function addCashMovement({ type, amount, reason, person_name }) {
   }
 }
 
-export async function closeShift({ countedCash, notes }) {
+export async function closeShift({ countedCash, notes, totals, movements, expected }) {
   const shift = store.state.cashRegister;
   if (!shift) throw new Error('No open shift');
-  const expected = computeExpectedCash(shift, totals, movements);
+  // expected is now passed as a parameter
   const difference = Math.round((Number(countedCash) - expected) * 100) / 100;
 
   // 1. Close the current shift
@@ -641,7 +641,7 @@ function openCloseShiftModal(root, shift, totals, movements, expected) {
     ]),
   ]));
 
-  const denoms = [2000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
+  const denoms = [500, 200, 100, 50, 20, 10, 5, 2, 1];
   const qty = {};
   const denomWrap = el('div', { class: 'p-5 space-y-2' });
   denomWrap.appendChild(el('div', { class: 'text-xs uppercase tracking-wide text-slate-500 font-semibold mb-2' }, 'Cash Counted (by denomination)'));
@@ -649,7 +649,7 @@ function openCloseShiftModal(root, shift, totals, movements, expected) {
   denoms.forEach(d => {
     qty[d] = 0;
     const inp = el('input', {
-      type: 'number', min: '0', step: '1', value: '0',
+      type: 'number', min: '0', step: '1', value: '',
       class: 'w-24 px-2 py-1.5 rounded border border-slate-300 text-sm text-right focus:outline-none focus:ring-2 focus:ring-indigo-500',
       oninput: (e) => { qty[d] = Number(e.target.value || 0); updateCounted(); },
     });
@@ -716,7 +716,7 @@ function openCloseShiftModal(root, shift, totals, movements, expected) {
     e.currentTarget.disabled = true;
     e.currentTarget.textContent = 'Closing…';
     try {
-      const result = await closeShift({ countedCash: counted, notes: notesIn.value.trim() });
+      const result = await closeShift({ countedCash: counted, notes: notesIn.value.trim() , totals, movements, expected });
       overlay.remove();
       showCloseReceipt(root, result);
     } catch (err) {
@@ -747,7 +747,7 @@ function showCloseReceipt(root, result) {
     ]);
 
   body.appendChild(row('Opening Float', fmtMoney(shift.opening_balance)));
-  body.appendChild(row('Cash Sales', fmtMoney(freshCashTotal), 'text-emerald-600'));
+  body.appendChild(row('Cash Sales', fmtMoney(totals.cash), 'text-emerald-600'));
   body.appendChild(row('Card Sales', fmtMoney(totals.card)));
   body.appendChild(row('UPI Sales', fmtMoney(totals.upi)));
   body.appendChild(row('Wallet Sales', fmtMoney(totals.wallet)));

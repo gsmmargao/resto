@@ -13,6 +13,8 @@ export class ESCPOSBuilder {
   init()           { return this._raw(ESC, 0x40); }
   align(a)         { return this._raw(ESC, 0x61, { left:0, center:1, right:2 }[a] ?? 0); }
   bold(on = true)  { return this._raw(ESC, 0x45, on ? 1 : 0); }
+  fontB(on = true) { return this._raw(ESC, 0x4D, on ? 1 : 0); }
+  doubleStrike(on = true) { return this._raw(ESC, 0x47, on ? 1 : 0); }
   doubleHeight(on) { return this._raw(ESC, 0x21, on ? 0x10 : 0x00); }
   doubleWidth(on)  { return this._raw(ESC, 0x21, on ? 0x20 : 0x00); }
   size(normal)     { return this._raw(ESC, 0x21, normal ? 0x00 : 0x30); }

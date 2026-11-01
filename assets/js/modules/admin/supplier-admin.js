@@ -82,18 +82,26 @@ function paint(root) {
       if (balance > 0) globalOutstanding += balance;
   });
 
-  // 1. Clean KPI Summary Card
-  const summaryCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 p-5 mb-6 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4' }, [
-      el('div', { class: 'flex items-center gap-4' }, [
-          el('div', { class: 'w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 text-xl font-bold' }, '₹'),
-          el('div', {}, [
-              el('div', { class: 'text-slate-500 text-xs uppercase tracking-widest font-bold' }, 'Total Outstanding Payables'),
-              el('div', { class: 'text-3xl font-bold text-slate-800 mt-1' }, `₹${globalOutstanding.toLocaleString('en-IN', {minimumFractionDigits: 2})}`)
-          ])
-      ]),
-      el('div', { class: 'text-sm text-slate-500 max-w-sm leading-relaxed' }, 'This is the total cumulative amount you owe to all suppliers for credit purchases.')
+    // 1. Colorful KPI Grid (Matches Overview)
+  const kpi = (label, value, gradient, sub = '') => el('div', { class: `rounded-xl bg-gradient-to-br ${gradient} text-white p-5 shadow-sm` }, [
+      el('div', { class: 'text-[10px] uppercase tracking-wider opacity-90 font-semibold' }, label),
+      el('div', { class: 'text-2xl font-bold mt-1' }, String(value)),
+      sub ? el('div', { class: 'text-[10px] opacity-90 mt-1' }, sub) : null,
   ]);
-  root.appendChild(summaryCard);
+
+  // Calculate total purchases for the KPI
+  let globalPurchases = 0;
+  state.suppliers.forEach(s => {
+      const purchases = (state.purchases || []).filter(p => p.supplier_id === s.id);
+      globalPurchases += purchases.reduce((sum, p) => sum + Number(p.grand_total || p.total || 0), 0);
+  });
+
+  const kpiGrid = el('div', { class: 'grid grid-cols-1 md:grid-cols-3 gap-4 mb-6' }, [
+      kpi('Total Suppliers', state.suppliers.length, 'from-slate-700 to-slate-800', 'Active Vendors'),
+      kpi('Total Purchases', fmtMoney(globalPurchases), 'from-indigo-500 to-indigo-600', 'All Time Value'),
+      kpi('Outstanding Payables', fmtMoney(globalOutstanding), 'from-red-500 to-rose-600', 'Amount Owed')
+  ]);
+  root.appendChild(kpiGrid);
 
   // 2. Top Header
   const topHeader = el('div', { class: 'flex items-center justify-between mb-4' }, [

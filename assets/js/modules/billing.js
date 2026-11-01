@@ -15,10 +15,71 @@ import { CONFIG } from '../../../config.js';
 
 const round2 = n => Math.round(Number(n || 0) * 100) / 100;
 
-export async function openCheckoutModal() {
+export async function printPreBill(cart, t) {
+  try {
+      const tableObj = store.state.tables.find(tbl => tbl.id === cart.tableId);
+      const tableName = cart.orderType === 'takeaway' ? 'Takeaway' : (tableObj ? tableObj.name : 'Takeaway');
+      
+      const payload = {
+          header: {
+              name: store.state.tenant?.name || 'Restaurant',
+              address: store.state.outlet?.address_line1 || '',
+              phone: store.state.outlet?.phone || ''
+          },
+          invoice: {
+              number: 'PRE-' + (cart.orderId ? cart.orderId.slice(0,4).toUpperCase() : 'NEW'),
+              date: new Date().toLocaleString('en-GB'),
+              table: tableName
+          },
+          items: cart.items.map(it => ({
+              name: it.name,
+              qty: it.qty,
+              rate: Number(it.unitPrice),
+              amount: Number(it.qty * it.unitPrice)
+          })),
+          totals: { 
+                        grand: window.store.state.cart.totals.grand, 
+                        discount: window.store.state.cart.totals.discount || 0 
+                    },
+          payments: [], 
+          customer: { name: cart.customerName || '' }
+      };
+
+      if (CONFIG.LOCAL_SERVER_IP) {
+          const res = await fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('Print server error');
+          if (window.toast) window.toast('Pre-bill printed', 'success');
+      } else {
+          if (window.toast) window.toast('Printer not configured', 'warn');
+      }
+  } catch (e) { 
+      console.error('Print error:', e); 
+      if (window.toast) window.toast('Print failed', 'error');
+  }
+}
+
+export async function openCheckoutModal(shouldPrint = false) {
   const cart = store.state.cart;
   const t = cart.totals;
   if (!cart.items.length) { toast('Cart is empty', 'warn'); return; }
+
+  if (shouldPrint) {
+      if (cart.orderId && cart.orderType === 'dine_in') {
+          import('../supabase-client.js').then(({ supabase }) => {
+              supabase.from('orders').update({ status: 'billed' }).eq('id', cart.orderId).then(() => {
+                  const order = window.store.state.openOrders.find(o => o.id === cart.orderId);
+                  if (order) order.status = 'billed';
+                  window.dispatchEvent(new CustomEvent('floorplan:reload'));
+              });
+          });
+      }
+      await printPreBill(cart, t);
+  }
+
   if (cart.orderType === 'dine_in' && !cart.tableId) { toast('Select a table first', 'warn'); return; }
   if (!t) { toast('Cart totals missing', 'error'); return; }
   if (!cart.orderId) { toast('Send to kitchen first', 'warn'); return; }
@@ -43,6 +104,7 @@ export async function openCheckoutModal() {
       el('div', { class: 'font-semibold text-lg' }, 'Review Order'),
       el('div', { class: 'text-xs text-slate-300' }, `${cart.orderType.replace('_',' ')} • ${cart.items.length} items`),
     ]),
+    el('button', { class: 'text-slate-300 hover:text-white text-2xl leading-none', onclick: () => overlay.remove() }, '×'),
   ]);
 
   const body = el('div', { class: 'flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-y-auto' });
@@ -69,27 +131,8 @@ export async function openCheckoutModal() {
       const totalEl = document.getElementById('modal-grand-total');
       if (totalEl) totalEl.innerText = fmtMoney(cart.totals.grand);
       
-      // === REAL-TIME DISCOUNT ROW UPDATE ===
-      let discRow = document.getElementById('modal-discount-row');
-      const grandTotalRow = totalEl ? totalEl.parentElement : null;
-      const summaryContainer = grandTotalRow ? grandTotalRow.parentElement : null;
-      
-      if (disc > 0) {
-          if (!discRow && summaryContainer && grandTotalRow) {
-              discRow = document.createElement('div');
-              discRow.id = 'modal-discount-row';
-              discRow.className = 'flex justify-between';
-              discRow.innerHTML = '<span class="text-slate-500">Discount</span><span class="text-emerald-600 font-medium" id="modal-discount-val">- Rs 0.00</span>';
-              summaryContainer.insertBefore(discRow, grandTotalRow);
-          }
-          if (discRow) {
-              discRow.style.display = 'flex';
-              const val = document.getElementById('modal-discount-val');
-              if (val) val.innerText = '- ' + fmtMoney(disc);
-          }
-      } else if (discRow) {
-          discRow.style.display = 'none';
-      }
+      // THIS SAVES THE DISCOUNT TO MEMORY AND UPDATES THE BACKGROUND CART
+      window.dispatchEvent(new CustomEvent('cart:changed'));
   };
 
   const btnAmt = el('button', {
@@ -175,13 +218,69 @@ export async function openCheckoutModal() {
   ]));
 
   right.appendChild(el('div', { class: 'mt-auto pt-6' }, [
-    el('button', {
-      class: 'w-full py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-base font-semibold shadow-sm',
-      onclick: () => {
-        overlay.remove();
-        openPaymentPopup(orderId, t, state.customer, state.tipAmount);
-      }
-    }, 'Proceed to Payment →')
+    
+
+    el('div', { class: 'flex flex-col gap-2 w-full mt-4' }, [
+      el('button', {
+        class: 'w-full py-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-base font-semibold shadow-sm flex items-center justify-center gap-2',
+        onclick: async () => {
+            try {
+                // Build pre-bill payload WITH the current totals (includes discount)
+                const cart = window.store.state.cart;
+                const tableObj = store.state.tables.find(tbl => tbl.id === cart.tableId);
+                const tableName = cart.orderType === 'takeaway' ? 'Takeaway' : (tableObj ? tableObj.name : 'Takeaway');
+                
+                const payload = {
+                    header: {
+                        name: store.state.tenant?.name || 'Restaurant',
+                        address: store.state.outlet?.address_line1 || '',
+                        phone: store.state.outlet?.phone || ''
+                    },
+                    invoice: {
+                        number: 'PRE-' + (cart.orderId ? cart.orderId.slice(0,4).toUpperCase() : 'NEW'),
+                        date: new Date().toLocaleString('en-GB'),
+                        table: tableName
+                    },
+                    items: cart.items.map(it => ({
+                        name: it.name,
+                        qty: it.qty,
+                        rate: Number(it.unitPrice),
+                        amount: Number(it.qty * it.unitPrice)
+                    })),
+                    totals: { 
+                        grand: window.store.state.cart.totals.grand, 
+                        discount: window.store.state.cart.totals.discount || 0 
+                    },
+                    payments: [], 
+                    customer: { name: state.customer?.name || cart.customerName || '' }
+                };
+
+                if (CONFIG.LOCAL_SERVER_IP) {
+                    const res = await fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    if (!res.ok) throw new Error('Print server error');
+                    if (window.toast) window.toast('Pre-bill printed successfully', 'success');
+                } else {
+                    if (window.toast) window.toast('Printer not configured', 'warn');
+                }
+            } catch (e) {
+                console.error('Print error:', e);
+                if (window.toast) window.toast('Failed to print bill', 'error');
+            }
+        }
+      }, '🖨️ Print Bill'),
+      
+      el('button', {
+        class: 'w-full py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-base font-semibold shadow-sm',
+        onclick: () => {
+            overlay.remove();
+            openPaymentPopup(orderId, t, state.customer, state.tipAmount);
+        }
+      }, 'Proceed to Payment →')
+    ]),
   ]));
 
   modal.appendChild(header); modal.appendChild(body);
@@ -520,14 +619,8 @@ async function completePayment(orderId, totals, customer, payments, tipAmount) {
       customer: result.customer, tableName,
     });
 
-    if (CONFIG.LOCAL_SERVER_IP) {
-      fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(receiptData)
-      }).catch(err => console.error('LAN Print error:', err));
-    } else if (isUSBConnected()) {
-      await printUSB(buildReceiptBytes(receiptData));
-    }
+        // Post-payment receipt print disabled to prevent double printing.
+    // The pre-bill is already printed when 'Generate Bill' is clicked.
   } catch (printErr) {
     console.error('[billing] Auto-print failed:', printErr);
   }

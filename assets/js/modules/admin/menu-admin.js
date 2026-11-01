@@ -31,7 +31,7 @@ export async function renderMenuAdmin(root) {
   root.appendChild(el('div', { class: 'h-full flex items-center justify-center text-slate-400 text-sm' }, 'Loading menu…'));
 
   try {
-    if (!state.loaded) await loadItems();
+    await loadItems();
     paint(root);
   } catch (err) {
     console.error('[menu-admin]', err);
@@ -41,14 +41,25 @@ export async function renderMenuAdmin(root) {
 }
 
 async function loadItems() {
-  const { data, error } = await supabase.from('menu_items')
+  // 1. Fetch Menu Items
+  const { data: itemsData, error: itemsErr } = await supabase.from('menu_items')
     .select('*')
     .eq('tenant_id', store.state.tenant.id)
     .order('name');
   
-  if (error) throw error;
-  state.items = data || [];
+  if (itemsErr) throw itemsErr;
+  state.items = itemsData || [];
   state.loaded = true;
+
+  // 2. Fetch Categories and update global store
+  // This guarantees the dropdowns always have the latest categories from DB
+  const { data: catsData } = await supabase.from('menu_categories')
+    .select('*')
+    .eq('tenant_id', store.state.tenant.id);
+  
+  if (catsData) {
+      window.store.state.categories = catsData;
+  }
 }
 
 async function refresh() {
@@ -102,9 +113,11 @@ function paint(root) {
     class: 'px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
     onchange: (e) => { state.catFilter = e.target.value; paint(root); },
   }, [
-    el('option', { value: 'all' }, 'All Categories'),
-    el('option', { value: 'food', selected: state.catFilter === 'food' ? true : null }, 'Food'),
-    el('option', { value: 'beverage', selected: state.catFilter === 'beverage' ? true : null }, 'Beverage'),
+            el('option', { value: 'all' }, 'All Categories'),
+        ...(window.store.state.categories || []).map(c => el('option', { 
+            value: c.name.toLowerCase(), 
+            selected: state.catFilter === c.name.toLowerCase() ? true : null 
+        }, c.name)),
   ]));
   inner.appendChild(filterBar);
 
@@ -194,7 +207,7 @@ function paint(root) {
 // ============================================================
 // EDIT MODAL
 // ============================================================
-function openItemEditor(root, item) {
+async function openItemEditor(root, item) {
   const isNew = !item;
   const draft = item ? { ...item } : {
     tenant_id: store.state.tenant.id,
@@ -224,12 +237,19 @@ function openItemEditor(root, item) {
     oninput: e => { draft.short_name = e.target.value.toUpperCase(); }
   });
 
+  // FETCH FRESH CATEGORIES FROM DATABASE
+  const { data: freshCats } = await supabase.from('menu_categories').select('*').eq('tenant_id', draft.tenant_id);
+  let availableCats = (freshCats && freshCats.length > 0) ? freshCats : (window.store.state.categories || []);
+
   const catIn = el('select', {
     class: inputCls, onchange: e => { draft.food_category = e.target.value; }
-  }, [
-    el('option', { value: 'food', selected: draft.food_category === 'food' ? true : null }, 'Food'),
-    el('option', { value: 'beverage', selected: draft.food_category === 'beverage' ? true : null }, 'Beverage')
-  ]);
+  }, availableCats.map(c => {
+    const val = c.name.toLowerCase();
+    return el('option', { 
+        value: val, 
+        selected: draft.food_category === val ? true : null 
+    }, c.name);
+  }));
 
   const priceIn = el('input', {
     type: 'number', step: '1', min: '0', value: draft.base_price, placeholder: 'Amount', class: inputCls,

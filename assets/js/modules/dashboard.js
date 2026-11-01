@@ -100,10 +100,11 @@ async function openOrderIntoCart(orderId, orderNumber, action = 'pos') {
   navigate('dashboard');
 
   // If the user clicked "Generate Bill", open the checkout modal automatically
-  if (action === 'checkout') {
+  if (action === 'checkout' || action === 'generate_bill') {
       setTimeout(() => {
           if (window.store.state.cashRegister) {
-              openCheckoutModal();
+              // Pass 'true' only if action is 'generate_bill'
+              openCheckoutModal(action === 'generate_bill');
           } else {
               toast('Open a shift first (Cash menu)', 'warn');
           }
@@ -189,11 +190,16 @@ window.addEventListener('floorplan:reload', () => {
 function renderTables(root) {
   renderTablesView(root, async (table, openOrder) => {
     if (openOrder) {
-      // Call our custom 4-option modal from tables.js
-      openTableActionModal(table, openOrder, async (t, o, action) => {
-        // This callback is triggered when user clicks "Take Order" or "Generate Bill"
-        await openOrderIntoCart(o.id, o.order_number, action);
-      });
+      if (openOrder.status === 'billed') {
+          // Open cart normally so items can be added
+          await openOrderIntoCart(openOrder.id, openOrder.order_number);
+      } else {
+          // Call our custom 4-option modal from tables.js
+          openTableActionModal(table, openOrder, async (t, o, action) => {
+            // This callback is triggered when user clicks "Take Order" or "Generate Bill"
+            await openOrderIntoCart(o.id, o.order_number, action);
+          });
+      }
     } else {
       const ok = await confirmDialog(`Start a new order at table ${table.name}?`, 'New order');
       if (ok) {

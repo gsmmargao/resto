@@ -286,9 +286,10 @@ export function buildKOTBytes({ kot, items, tableName, waiterName, orderType }) 
 
   // Items
   for (const it of items) {
-    b.bold(true).doubleHeight(true);
+    // Smaller (Font B) + Bolder + Double Strike (Darker)
+    b.fontB(true).bold(true).doubleStrike(true);
     b.line(`${Number(it.quantity)} x ${it.name_snapshot}`);
-    b.doubleHeight(false).bold(false);
+    b.fontB(false).bold(false).doubleStrike(false);
     
     if (it.variant_name) b.line(`   > ${it.variant_name}`);
     if (it.notes) b.line(`   * ${it.notes}`);

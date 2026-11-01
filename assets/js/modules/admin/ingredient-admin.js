@@ -90,7 +90,20 @@ function renderFilterBar(root) {
   bar.appendChild(el('input', {
     type: 'search', placeholder: 'Search name / SKU / barcode…', value: state.search,
     class: 'flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
-    oninput: (e) => { state.search = e.target.value.toLowerCase(); paint(root); },
+    id: 'ingredient-search-input',
+    oninput: (e) => { 
+        const val = e.target.value;
+        state.search = val.toLowerCase(); 
+        const pos = e.target.selectionStart;
+        paint(root); 
+        setTimeout(() => {
+            const inp = document.getElementById('ingredient-search-input');
+            if (inp) {
+                inp.focus();
+                inp.setSelectionRange(pos, pos);
+            }
+        }, 10);
+    },
   }));
 
   bar.appendChild(el('select', {

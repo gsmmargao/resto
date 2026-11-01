@@ -139,7 +139,15 @@ app.post('/api/print-bill', async (req, res) => {
     
     printer.drawLine();
     
-    printer.leftRight('Food and Beverage:', Number(totals?.grand || 0).toFixed(0));
+    if (totals?.discount > 0) {
+        printer.leftRight('Discount:', `-${Number(totals.discount).toFixed(2)}`);
+        printer.drawLine();
+    }
+    
+    if (totals?.discount > 0) {
+        printer.leftRight('Discount:', `-${Number(totals.discount).toFixed(2)}`);
+    }
+    printer.leftRight('Food and Beverage:', Number(totals?.grand || 0).toFixed(2));
     
     printer.drawLine();
     

@@ -30,7 +30,7 @@ export async function loadTables() {
 
   try {
     const { data, error } = await supabase.from('orders')
-      .select('id, order_number, table_id, status, grand_total, placed_at, guest_count, customer_name, customer_name_snapshot, order_type, table_name_snapshot')
+      .select('*')
       .eq('outlet_id', outletId)
       .in('status', ['open','in_kitchen','partially_ready','ready','served','billed','partially_paid']);
     if (error) throw error;
@@ -241,17 +241,18 @@ function buildCard(table, openOrder, onPickTable) {
           openOrder ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
               el('div', { class: 'truncate font-semibold' }, `#${openOrder.order_number} ${openOrder.customer_name_snapshot ? '• ' + openOrder.customer_name_snapshot : ''}`),
               el('div', { class: 'flex justify-between' }, [
-                  el('span', {}, fmtMoney(openOrder.grand_total || 0)),
+                  el('span', {}, fmtMoney(openOrder.gross_total || openOrder.subtotal || openOrder.grand_total || 0)),
                   el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
               ]),
           ]) : el('div', { class: 'text-[11px] opacity-90' }, 'Occupied')
       ]);
   }
 
-  const status = openOrder ? 'occupied' : (table.status || 'available');
+  const status = openOrder ? (openOrder.status === 'billed' ? 'billed' : 'occupied') : (table.status || 'available');
   const color = {
     available: 'bg-emerald-500 hover:bg-emerald-600',
     occupied:  'bg-red-500 hover:bg-red-600',
+    billed:    'bg-slate-500 hover:bg-slate-600',
     reserved:  'bg-amber-400 hover:bg-amber-500',
     cleaning:  'bg-slate-400 hover:bg-slate-500',
     blocked:   'bg-slate-500',
@@ -292,7 +293,7 @@ function buildCard(table, openOrder, onPickTable) {
       ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
           el('div', { class: 'truncate font-semibold' }, `#${openOrder.order_number} ${openOrder.customer_name_snapshot ? '• ' + openOrder.customer_name_snapshot : ''}`),
           el('div', { class: 'flex justify-between' }, [
-            el('span', {}, fmtMoney(openOrder.grand_total || 0)),
+            el('span', {}, fmtMoney(openOrder.gross_total || openOrder.subtotal || openOrder.grand_total || 0)),
             el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
           ]),
         ])
@@ -338,7 +339,7 @@ export function openTableActionModal(table, openOrder, onPickTable) {
   const header = el('div', { class: 'px-5 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50' }, [
     el('div', {}, [
       el('h3', { class: 'font-bold text-lg text-slate-800' }, table.name),
-      el('p', { class: 'text-xs text-slate-500 mt-1' }, `#${openOrder.order_number} • ₹${Number(openOrder.grand_total || 0).toFixed(2)}`)
+      el('p', { class: 'text-xs text-slate-500 mt-1' }, `#${openOrder.order_number} • ₹${Number(openOrder.gross_total || openOrder.subtotal || openOrder.grand_total || 0).toFixed(2)}`)
     ]),
     el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
   ]);
@@ -358,7 +359,7 @@ export function openTableActionModal(table, openOrder, onPickTable) {
     class: 'w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg transition shadow-sm text-sm',
     onclick: () => { 
         overlay.remove(); 
-        if (typeof onPickTable === 'function') onPickTable(table, openOrder, 'checkout'); 
+        if (typeof onPickTable === 'function') onPickTable(table, openOrder, 'generate_bill'); 
     }
   }, 'Generate Bill'));
 

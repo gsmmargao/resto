@@ -6,12 +6,12 @@ import { state, shiftDate, kpi, rangeStart, rangeEnd } from './helpers.js';
 // Import all your split tabs
 import { renderOverview } from './overview.js?v=1793478710';
 import { renderBills } from './bills.js?v=1793478575';
-import { renderCashbookDetailed } from './cashbook.js?v=1793478710';
+import { renderCashbookDetailed } from './cashbook.js?v=5ef7811956';
 import { renderUPI } from './upi.js?v=1793478710';
 import { renderVoidedItems } from './voided.js?v=1793478710';
 import { renderKOTs } from './kots.js?v=1793478710';
-import { renderProfitBook } from './profitbook.js?v=1793478710';
-import { renderExpenses } from './expenses.js?v=1793478710';
+import { renderProfitBook } from './profitbook.js?v=5ef7811956';
+import { renderExpenses } from './expenses.js?v=5ef7811956';
 
 // Hoisted fallback for Cash Variance tab
 function renderCashVariance(root) { return renderCashbookDetailed(root); }

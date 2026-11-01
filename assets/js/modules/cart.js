@@ -1,6 +1,54 @@
+import { CONFIG } from '../../../config.js';
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
 import {el, fmtMoney, uuid, toast, confirmDialog} from '../utils.js';
+
+// Standalone Pre-Bill Printer (avoids circular dependency with billing.js)
+async function printPreBill(cart, t) {
+    try {
+        const tableObj = window.store.state.tables.find(tbl => tbl.id === cart.tableId);
+        const tableName = cart.orderType === 'takeaway' ? 'Takeaway' : (tableObj ? tableObj.name : 'Takeaway');
+        
+        const payload = {
+            header: {
+                name: window.store.state.tenant?.name || 'Restaurant',
+                address: window.store.state.outlet?.address_line1 || '',
+                phone: window.store.state.outlet?.phone || ''
+            },
+            invoice: {
+                number: 'PRE-' + (cart.orderId ? cart.orderId.slice(0,4).toUpperCase() : 'NEW'),
+                date: new Date().toLocaleString('en-GB'),
+                table: tableName
+            },
+            items: cart.items.map(it => ({
+                name: it.name,
+                qty: it.qty,
+                rate: Number(it.unitPrice),
+                amount: Number(it.qty * it.unitPrice)
+            })),
+            totals: { grand: t.grand },
+            payments: [], 
+            customer: { name: cart.customerName || '' }
+        };
+
+        if (CONFIG.LOCAL_SERVER_IP) {
+            const res = await fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!res.ok) throw new Error('Print server error: ' + res.status);
+            if (window.toast) window.toast('Pre-bill printed', 'success');
+        } else {
+            if (window.toast) window.toast('Printer not configured', 'warn');
+        }
+    } catch (e) { 
+        console.error('Print error:', e); 
+        if (window.toast) window.toast('Print failed: ' + e.message, 'error');
+    }
+}
+
+
 
 function notifyCartChanged() { window.dispatchEvent(new CustomEvent('cart:changed')); }
 
@@ -13,12 +61,16 @@ export function addToCart({ item, variant, addons = [], notes = '' }) {
   if (existing) {
     existing.qty += 1;
   } else {
+    const category = store.state.categories.find(c => c.id === item.category_id);
+    const categoryName = category ? category.name : 'Unknown';
+    
     cart.items.push({
       id: uuid(), _key: key, _saved: false, _dbId: null,
       menuItemId: item.id, variantId: variant?.id || null,
       name: item.name, variantName: variant?.name || null,
       qty: 1, unitPrice: Number(price), taxRate: Number(taxRate),
       taxInclusive: !!item.tax_inclusive, stationId: item.station_id || null,
+      categoryName, // <--- SAVES THE CATEGORY
       addons, notes,
     });
   }
@@ -204,10 +256,17 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
       onclick: () => { if (hasNewItems) onSendKOT(); },
     }, hasNewItems ? (cart.orderId ? 'Send New Items (KOT)' : 'Send to Kitchen (KOT)') : 'No New Items'),
 
-    el('button', {
-      class: `col-span-2 py-3 rounded-lg text-base font-semibold shadow-sm transition ${cart.orderId ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
-      onclick: () => { if (cart.orderId) onCheckout(); else toast('Send to kitchen first', 'warn'); },
-    }, cart.orderId ? `Checkout • ${fmtMoney(t.grand)}` : 'Checkout • —'),
+    el('div', { class: 'col-span-2 grid grid-cols-2 gap-2' }, [
+      el('button', {
+        class: `py-3 rounded-lg text-base font-semibold shadow-sm transition ${cart.orderId ? 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
+        onclick: () => { if (cart.orderId) printPreBill(cart, t); else toast('Send to kitchen first', 'warn'); },
+      }, 'Print Bill'),
+      
+      el('button', {
+        class: `py-3 rounded-lg text-base font-semibold shadow-sm transition ${cart.orderId ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
+        onclick: () => { if (cart.orderId) onCheckout(); else toast('Send to kitchen first', 'warn'); },
+      }, cart.orderId ? `Checkout • ${fmtMoney(t.grand)}` : 'Checkout • —')
+    ]),
   ].filter(Boolean));
 
   
@@ -219,39 +278,53 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 }
 
 function buildLine(l) {
-  if (!l || !l.name) return el('div', { class: 'p-2 text-red-500 text-xs' }, 'Unknown Item');
   const isSaved = !!l._saved;
   return el('div', {
     class: `px-3 py-2 border-b border-slate-200 ${isSaved ? 'bg-slate-100/60' : 'bg-white'}`,
   }, [
-    el('div', { class: 'flex justify-between items-start gap-2' }, [
-      el('div', { class: 'flex-1 min-w-0' }, [
-        el('div', { class: 'flex items-center gap-1.5 mb-0.5' }, [
-          isSaved ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wide shrink-0' }, 'Sent') : null,
-          el('span', { class: 'text-sm font-medium text-slate-800 truncate' }, l.name),
-        ].filter(Boolean)),
-        l.variantName ? el('div', { class: 'text-xs text-slate-500' }, l.variantName) : null,
-        l.notes ? el('div', { class: 'text-xs italic text-slate-500 truncate' }, `"${l.notes}"`) : null,
-      ].filter(Boolean)),
-      el('div', { class: 'text-sm font-semibold text-slate-800 shrink-0' }, fmtMoney(l.qty * l.unitPrice)),
-    ]),
+    el('div', { class: 'flex items-center justify-between gap-2' }, [
+      
+      // 1. LEFT: Large Minus Button
+      el('button', { 
+          class: 'w-10 h-10 flex items-center justify-center bg-slate-100 hover:bg-slate-200 rounded-lg font-bold text-xl text-slate-700 shrink-0 shadow-sm', 
+          onclick: () => { if (l.qty > 1) updateQty(l.id, l.qty - 1); else voidSavedItem(l); } 
+      }, '−'),
 
-    isSaved
-      ? el('div', { class: 'mt-1 flex justify-between items-center' }, [
-          el('div', { class: 'text-[10px] text-slate-400 italic' }, `Fired • Qty ${l.qty} (locked)`),
-          el('button', {
-            class: 'text-[10px] font-bold text-red-500 hover:text-red-700 underline',
-            onclick: () => voidSavedItem(l),
-          }, 'Void Item'),
-        ])
-      : el('div', { class: 'mt-1.5 flex items-center justify-between' }, [
-          el('div', { class: 'flex items-center gap-1' }, [
-            el('button', { class: 'w-6 h-6 rounded border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs', onclick: () => updateQty(l.id, l.qty - 1) }, '−'),
-            el('span', { class: 'w-7 text-center text-sm font-medium' }, l.qty),
-            el('button', { class: 'w-6 h-6 rounded border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs', onclick: () => updateQty(l.id, l.qty + 1) }, '+'),
-          ]),
-          el('button', { class: 'text-xs text-red-500 hover:text-red-700', onclick: () => removeLine(l.id) }, 'Remove'),
+      // 2. MIDDLE: Name, Notes, and Qty Badge
+      el('div', { class: 'flex-1 min-w-0 px-2' }, [
+        el('div', { class: 'flex items-center justify-between gap-2 mb-1' }, [
+            el('span', { class: 'text-sm font-bold text-slate-800 truncate' }, l.name),
+            // QTY inside a yellow box
+            el('span', { class: 'bg-amber-100 text-amber-800 font-bold px-2.5 py-0.5 rounded-md text-sm shrink-0 shadow-sm border border-amber-200' }, `x ${l.qty}`)
         ]),
+        
+        isSaved ? el('span', { class: 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold uppercase tracking-wide inline-block' }, 'Sent') : null,
+        l.variantName ? el('div', { class: 'text-xs text-slate-500 mt-0.5' }, l.variantName) : null,
+        
+        !isSaved ? el('input', {
+            type: 'text',
+            class: 'w-full text-xs px-2 py-1.5 mt-1.5 border border-slate-200 rounded bg-slate-50 text-slate-700 placeholder-slate-400 focus:outline-none focus:border-indigo-400 focus:bg-white',
+            placeholder: 'Add note...',
+            value: l.notes || '',
+            oninput: (e) => { l.notes = e.target.value.trim(); }
+        }) : l.notes ? el('div', { class: 'text-xs italic text-slate-500 mt-1' }, `"${l.notes}"`) : null,
+      ]),
+
+      // 3. RIGHT: Plus Button, Price, and Remove
+      el('div', { class: 'flex flex-col items-end shrink-0' }, [
+        // Large Plus Button
+        el('button', { 
+            class: 'w-10 h-10 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-bold text-xl mb-1 shadow-sm border border-indigo-100', 
+            onclick: () => updateQty(l.id, l.qty + 1) 
+        }, '+'),
+        el('div', { class: 'text-sm font-bold text-slate-800' }, fmtMoney(l.qty * l.unitPrice)),
+        el('button', {
+          class: 'text-[10px] text-red-500 hover:text-red-700 underline mt-0.5',
+          onclick: () => voidSavedItem(l),
+        }, 'Remove')
+      ])
+      
+    ])
   ]);
 }
 

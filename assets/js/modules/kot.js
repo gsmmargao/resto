@@ -38,6 +38,8 @@ export async function sendKOT() {
       guest_count: Number(cart.guestCount) || 1,
       waiter_id: member?.id || null, cashier_id: member?.id || null,
       created_by: store.state.session?.user?.id || null,
+      subtotal: cart.totals.gross || 0,
+      gross_total: cart.totals.gross || 0, 
       service_charge_pct: Number(cart.serviceChargePct) || 0,
     };
 
@@ -74,12 +76,37 @@ export async function sendKOT() {
   });
   window.dispatchEvent(new CustomEvent('cart:changed'));
 
+  // --- FETCH EXACT CATEGORIES FROM MENU ITEMS TABLE ---
+  const { data: menuItemsData } = await supabase
+      .from('menu_items')
+      .select('id, food_category')
+      .in('id', newItems.map(ni => ni.menuItemId));
+      
+  const itemCatMap = {};
+  (menuItemsData || []).forEach(mi => { 
+      itemCatMap[mi.id] = (mi.food_category || '').trim().toLowerCase(); 
+  });
+
   const byStation = new Map();
-  insertedItems.forEach(it => {
+  insertedItems.forEach((it) => {
+    const catName = itemCatMap[it.menu_item_id] || '';
+    
+    console.log(`[KOT DEBUG NEW] Item: "${it.name_snapshot}", Category: "${catName}"`);
+
+    // SKIP BEVERAGES
+    if (catName === 'beverage' || catName === 'beverages') {
+        console.log(`[KOT DEBUG NEW] ✅ SKIPPING "${it.name_snapshot}"`);
+        return; 
+    }
+    
     const key = it.station_id || 'default';
     if (!byStation.has(key)) byStation.set(key, []);
     byStation.get(key).push(it);
   });
+  // --------------------------------------------
+  // --------------------------------------------
+  // --------------------------------------------
+  // --------------------------------------------
 
   let kotSuccess = 0;
   for (const [stationId, items] of byStation.entries()) {
@@ -102,7 +129,13 @@ export async function sendKOT() {
     const { data: kot, error: kErr } = await supabase.from('kots').insert(kotPayload).select().single();
     if (kErr) { toast('KOT insert failed: ' + kErr.message, 'error'); continue; }
 
-    const kotItemsPayload = items.map(it => ({
+    // Append notes to the name for the printer
+    const printItems = items.map(it => ({
+        ...it,
+        name_snapshot: it.notes ? `${it.name_snapshot} (${it.notes})` : it.name_snapshot
+    }));
+
+    const kotItemsPayload = printItems.map(it => ({
       tenant_id: tenant.id, kot_id: kot.id, order_item_id: it.id,
       name_snapshot: it.name_snapshot, variant_name: it.variant_name,
       quantity: Number(it.quantity), status: 'pending', notes: it.notes || null,

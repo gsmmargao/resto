@@ -240,15 +240,25 @@ function openPOEditor(root) {
 
   // Header fields
   body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3' }, [
-    field('Supplier *', el('select', {
-      class: inputCls,
-      onchange: e => { draft.supplier_id = e.target.value || null; },
-    }, [
-      el('option', { value: '' }, 'Select supplier…'),
-      ...state.suppliers.map(s => el('option', { value: s.id }, s.name)),
-    ])),
+    el('div', {}, [
+      field('Supplier *', el('input', {
+        type: 'text',
+        list: 'supplier-list',
+        class: inputCls,
+        placeholder: 'Search or select supplier...',
+        oninput: (e) => {
+            const val = e.target.value.trim().toLowerCase();
+            const match = state.suppliers.find(s => s.name.toLowerCase() === val);
+            draft.supplier_id = match ? match.id : null;
+        }
+      })),
+      el('datalist', { id: 'supplier-list' }, state.suppliers.map(s => el('option', { value: s.name })))
+    ]),
     field('Purchase Date', el('input', {
-      type: 'date', value: draft.order_date, class: inputCls, disabled: true,
+      type: 'date', 
+      value: draft.order_date, 
+      class: inputCls, 
+      onchange: e => { draft.order_date = e.target.value; }
     })),
   ]));
 
@@ -296,7 +306,7 @@ function openPOEditor(root) {
     el('button', {
       class: 'text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold',
       onclick: () => {
-        lines.push({ ingredient_id: null, quantity: 0, unit_id: null, unit_price: 0 });
+        lines.push({ ingredient_id: null, quantity: '', unit_id: null, unit_price: '', total_temp: null });
         renderLines();
       },
     }, '+ Add Item'),
@@ -317,45 +327,100 @@ function openPOEditor(root) {
 
       const row = el('div', { class: 'p-3 grid grid-cols-12 gap-2 items-end' });
 
+      // INGREDIENT
       row.appendChild(el('div', { class: 'col-span-5' }, [
         el('label', { class: 'block text-[10px] uppercase text-slate-500 mb-0.5' }, 'Ingredient'),
-        el('select', {
+        el('input', {
+          type: 'text',
+          list: `ing-list-${i}`,
           class: inputCls + ' text-xs py-1.5',
-          onchange: (e) => {
-            l.ingredient_id = e.target.value || null;
-            const freshIng = state.ingredients.find(x => x.id === l.ingredient_id);
-            l.unit_id = freshIng?.unit_id || null;
-            if (freshIng && (!l.unit_price || l.unit_price === 0)) l.unit_price = Number(freshIng.avg_cost) || 0;
-            renderLines();
+          value: l.ingredient_name || (state.ingredients.find(x => x.id === l.ingredient_id)?.name || ''),
+          placeholder: 'Search or type new...',
+          oninput: (e) => {
+            const val = e.target.value.trim();
+            l.ingredient_name = val;
+            const freshIng = state.ingredients.find(x => x.name.toLowerCase() === val.toLowerCase());
+            if (freshIng) {
+                l.ingredient_id = freshIng.id;
+                l.unit_id = freshIng.unit_id;
+                l.total_temp = null;
+                if (!l.unit_price) {
+                    l.unit_price = Number(freshIng.avg_cost) || 0;
+                    const priceIn = document.getElementById(`price-input-${i}`);
+                    if (priceIn) priceIn.value = l.unit_price;
+                    const totalIn = document.getElementById(`total-input-${i}`);
+                    if (totalIn) totalIn.value = (l.quantity * l.unit_price).toFixed(2);
+                    updateTotals();
+                }
+            } else {
+                l.ingredient_id = null;
+            }
           },
-        }, [
-          el('option', { value: '' }, '— select —'),
-          ...state.ingredients.map(x => el('option', { value: x.id, selected: l.ingredient_id === x.id ? true : null }, x.name)),
-        ]),
+          onchange: () => renderLines() // Only re-render when done typing
+        }),
+        el('datalist', { id: `ing-list-${i}` }, state.ingredients.map(x => el('option', { value: x.name })))
       ]));
 
+      // QTY
       row.appendChild(el('div', { class: 'col-span-2' }, [
         el('label', { class: 'block text-[10px] uppercase text-slate-500 mb-0.5' }, `Qty ${unit}`),
         el('input', {
-          type: 'number', step: '0.001', min: 0, value: l.quantity,
+          type: 'number', step: '0.001', min: 0, value: l.quantity || '', id: `qty-input-${i}`,
           class: inputCls + ' text-xs py-1.5',
-          oninput: e => { l.quantity = Number(e.target.value || 0); updateTotals(); },
+          oninput: (e) => { 
+              l.quantity = Number(e.target.value || 0); 
+              const totalIn = document.getElementById(`total-input-${i}`);
+              const priceIn = document.getElementById(`price-input-${i}`);
+              
+              if (l.quantity > 0) {
+                  if (l.total_temp !== null) {
+                      // User entered Total first
+                      l.unit_price = l.total_temp / l.quantity;
+                      if (priceIn) priceIn.value = l.unit_price.toFixed(2);
+                  } else if (l.unit_price > 0) {
+                      // User entered Price first
+                      if (totalIn) totalIn.value = (l.quantity * l.unit_price).toFixed(2);
+                  }
+              }
+              updateTotals(); 
+          },
         }),
       ]));
 
+      // PRICE
       row.appendChild(el('div', { class: 'col-span-2' }, [
         el('label', { class: 'block text-[10px] uppercase text-slate-500 mb-0.5' }, `Price/${unit}`),
         el('input', {
-          type: 'number', step: '0.01', min: 0, value: l.unit_price,
+          type: 'number', step: '0.01', min: 0, value: l.unit_price || '', id: `price-input-${i}`,
           class: inputCls + ' text-xs py-1.5',
-          oninput: e => { l.unit_price = Number(e.target.value || 0); updateTotals(); },
+          oninput: (e) => { 
+              l.unit_price = Number(e.target.value || 0); 
+              l.total_temp = null; // Clear temp total if price is manually changed
+              const totalIn = document.getElementById(`total-input-${i}`);
+              if (totalIn) totalIn.value = (l.quantity * l.unit_price).toFixed(2);
+              updateTotals(); 
+          },
         }),
       ]));
 
-      const total = l.quantity * l.unit_price;
-      row.appendChild(el('div', { class: 'col-span-2 text-right pb-1' }, [
-        el('div', { class: 'text-[10px] uppercase text-slate-500 mb-0.5' }, 'Total'),
-        el('div', { class: 'text-sm font-semibold text-slate-800' }, fmtMoney(total)),
+      // EDITABLE TOTAL
+      row.appendChild(el('div', { class: 'col-span-2' }, [
+        el('label', { class: 'block text-[10px] uppercase text-slate-500 mb-0.5' }, 'Total'),
+        el('input', {
+          type: 'number', step: '0.01', min: 0, value: (l.quantity * l.unit_price) > 0 ? (l.quantity * l.unit_price).toFixed(2) : '', id: `total-input-${i}`,
+          class: inputCls + ' text-xs py-1.5 font-bold text-right text-indigo-700',
+          oninput: (e) => {
+             const newTotal = Number(e.target.value || 0);
+             l.total_temp = newTotal; // Remember what was typed here
+             
+             if (l.quantity > 0) {
+                 l.unit_price = newTotal / l.quantity;
+                 const priceIn = document.getElementById(`price-input-${i}`);
+                 if (priceIn) priceIn.value = l.unit_price.toFixed(2);
+                 updateTotals();
+             }
+          }
+        }),
       ]));
 
       row.appendChild(el('div', { class: 'col-span-1 flex justify-end pb-1' }, [
@@ -401,11 +466,42 @@ function openPOEditor(root) {
   footer.querySelector('#btn-save-po').addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     if (!draft.supplier_id) { toast('Select a supplier', 'warn'); return; }
-    const validLines = lines.filter(l => l.ingredient_id && l.quantity > 0);
+    let validLines = lines.filter(l => (l.ingredient_id || (l.ingredient_name && l.ingredient_name.trim() !== '')) && l.quantity > 0);
     if (!validLines.length) { toast('Add at least one item', 'warn'); return; }
 
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
+      // --- AUTO-CREATE NEW INGREDIENTS ---
+      for (let i = 0; i < validLines.length; i++) {
+          let l = validLines[i];
+          if (!l.ingredient_id && l.ingredient_name) {
+              // Check if it already exists in state (case-insensitive)
+              let existing = state.ingredients.find(x => x.name.toLowerCase() === l.ingredient_name.trim().toLowerCase());
+              
+              if (!existing) {
+                  // Create new ingredient in DB
+                  const { data: newIng, error: ingErr } = await supabase.from('ingredients').insert({
+                      tenant_id: draft.tenant_id,
+                      name: l.ingredient_name.trim(),
+                      unit_id: l.unit_id || null, // Use selected unit or null
+                      avg_cost: Number(l.unit_price) || 0,
+                      is_active: true
+                  }).select().single();
+                  
+                  if (ingErr) throw new Error('Failed to create ingredient: ' + ingErr.message);
+                  existing = newIng;
+                  
+                  // Add to local state so it appears next time without refresh
+                  state.ingredients.push(existing);
+              }
+              
+              // Update the line with the new ID
+              l.ingredient_id = existing.id;
+              if (!l.unit_id) l.unit_id = existing.unit_id;
+          }
+      }
+      // -----------------------------------
+
       const subtotal = validLines.reduce((s, l) => s + (l.quantity * l.unit_price), 0);
       
       const { data: poNo } = await supabase.rpc('next_doc_number', { p_outlet: draft.outlet_id, p_doc_type: 'po' });

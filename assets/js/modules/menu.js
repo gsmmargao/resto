@@ -139,20 +139,58 @@ export function renderMenuPanel(root, { onAddItem }) {
       const isInCart = store.state.cart.items.some(l => l.menuItemId === item.id);
       const cardClass = `text-left ${isInCart ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'} rounded-lg border hover:border-indigo-400 hover:shadow-sm transition p-2.5 flex flex-col gap-1 min-h-[78px]`;
 
-      const card = el('button', {
+      const qtyInCart = window.store.state.cart.items.filter(l => l.menuItemId === item.id).reduce((s, l) => s + l.qty, 0);
+
+      const card = el('div', {
         'data-item-id': item.id,
-        class: cardClass,
-        onclick: () => {
+        class: `text-left ${qtyInCart > 0 ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'} rounded-lg border hover:border-indigo-400 hover:shadow-sm transition p-2.5 flex flex-col justify-between min-h-[78px] cursor-pointer relative group`,
+        onclick: (e) => {
+          // Ignore clicks on the +/- buttons
+          if (e.target.closest('.qty-btn')) return; 
+          
           if (vars.length === 0) onAddItem({ item, variant: null });
           else if (vars.length === 1) onAddItem({ item, variant: vars[0] });
           else openVariantPicker(item, vars, onAddItem);
         },
       }, [
-        el('div', { class: 'text-[13px] font-medium text-slate-800 leading-snug line-clamp-2' }, [vegDot, item.name]),
-        el('div', { class: 'mt-auto flex items-center justify-between text-[11px] text-slate-500' }, [
-          el('span', {}, `₹${Number(item.base_price).toFixed(0)}`),
-          el('span', { class: 'uppercase tracking-wide' }, item.food_category || ''),
+        el('div', { class: 'flex items-start gap-2' }, [
+          vegDot,
+          el('div', { class: 'font-medium text-slate-800 text-sm leading-tight' }, item.name)
         ]),
+        
+        qtyInCart > 0 ? 
+          // Controls appear when item is added
+          el('div', { class: 'flex items-center justify-between mt-2 bg-white rounded-lg border border-amber-200 p-0.5 shadow-sm w-full' }, [
+              el('button', { 
+                  class: 'qty-btn w-7 h-7 flex items-center justify-center text-red-600 hover:bg-red-50 rounded font-bold text-lg transition', 
+                  onclick: (e) => {
+                      e.stopPropagation();
+                      const cartItem = window.store.state.cart.items.find(l => l.menuItemId === item.id);
+                      if (cartItem) {
+                          import('./cart.js').then(({ updateQty }) => {
+                              if (cartItem.qty > 1) updateQty(cartItem.id, cartItem.qty - 1);
+                              else updateQty(cartItem.id, 0);
+                          });
+                      }
+                  }
+              }, '-'),
+              el('span', { class: 'text-xs font-bold text-slate-800 w-6 text-center' }, qtyInCart),
+              el('button', { 
+                  class: 'qty-btn w-7 h-7 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 rounded font-bold text-lg transition', 
+                  onclick: (e) => {
+                      e.stopPropagation();
+                      if (vars.length === 0) onAddItem({ item, variant: null });
+                      else if (vars.length === 1) onAddItem({ item, variant: vars[0] });
+                      else openVariantPicker(item, vars, onAddItem);
+                  }
+              }, '+')
+          ]) 
+        : 
+          // Normal price/category display
+          el('div', { class: 'flex justify-between items-end mt-auto w-full' }, [
+              el('div', { class: 'text-xs font-semibold text-slate-700' }, `₹${item.base_price}`),
+              el('span', { class: 'text-[10px] text-slate-400 font-medium' }, 'FOOD')
+          ])
       ]);
       list.appendChild(card);
     });
@@ -163,17 +201,14 @@ export function renderMenuPanel(root, { onAddItem }) {
 
   // INSTANT HIGHLIGHT LISTENER
   window.addEventListener('cart:changed', () => {
-      const cartItemIds = new Set((store.state.cart.items || []).map(l => l.menuItemId));
-      list.querySelectorAll('[data-item-id]').forEach(btn => {
-          const id = btn.getAttribute('data-item-id');
-          if (cartItemIds.has(id)) {
-              btn.classList.add('bg-amber-50', 'border-amber-300');
-              btn.classList.remove('bg-white', 'border-slate-200');
-          } else {
-              btn.classList.remove('bg-amber-50', 'border-amber-300');
-              btn.classList.add('bg-white', 'border-slate-200');
-          }
-      });
+      // Save scroll position so the screen doesn't jump
+      const scrollPos = list.scrollTop;
+      
+      // Instantly re-render the items to show/hide the +/- buttons
+      renderItems();
+      
+      // Restore scroll position
+      list.scrollTop = scrollPos;
   });
 }
 
