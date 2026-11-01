@@ -135,8 +135,13 @@ export function renderMenuPanel(root, { onAddItem }) {
         el('span', { class: `block w-1.5 h-1.5 rounded-full m-auto ${dotColor}` }),
       ]);
 
+      // Check if item is in cart to highlight it
+      const isInCart = store.state.cart.items.some(l => l.menuItemId === item.id);
+      const cardClass = `text-left ${isInCart ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'} rounded-lg border hover:border-indigo-400 hover:shadow-sm transition p-2.5 flex flex-col gap-1 min-h-[78px]`;
+
       const card = el('button', {
-        class: 'text-left bg-white rounded-lg border border-slate-200 hover:border-indigo-400 hover:shadow-sm transition p-2.5 flex flex-col gap-1 min-h-[78px]',
+        'data-item-id': item.id,
+        class: cardClass,
         onclick: () => {
           if (vars.length === 0) onAddItem({ item, variant: null });
           else if (vars.length === 1) onAddItem({ item, variant: vars[0] });
@@ -155,6 +160,21 @@ export function renderMenuPanel(root, { onAddItem }) {
 
   renderFilters();
   renderItems();
+
+  // INSTANT HIGHLIGHT LISTENER
+  window.addEventListener('cart:changed', () => {
+      const cartItemIds = new Set((store.state.cart.items || []).map(l => l.menuItemId));
+      list.querySelectorAll('[data-item-id]').forEach(btn => {
+          const id = btn.getAttribute('data-item-id');
+          if (cartItemIds.has(id)) {
+              btn.classList.add('bg-amber-50', 'border-amber-300');
+              btn.classList.remove('bg-white', 'border-slate-200');
+          } else {
+              btn.classList.remove('bg-amber-50', 'border-amber-300');
+              btn.classList.add('bg-white', 'border-slate-200');
+          }
+      });
+  });
 }
 
 function openVariantPicker(item, variants, onAddItem) {

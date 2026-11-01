@@ -43,7 +43,6 @@ export async function openCheckoutModal() {
       el('div', { class: 'font-semibold text-lg' }, 'Review Order'),
       el('div', { class: 'text-xs text-slate-300' }, `${cart.orderType.replace('_',' ')} • ${cart.items.length} items`),
     ]),
-    el('button', { class: 'text-slate-300 hover:text-white text-2xl leading-none', onclick: () => overlay.remove() }, '×'),
   ]);
 
   const body = el('div', { class: 'flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 overflow-y-auto' });
@@ -51,8 +50,89 @@ export async function openCheckoutModal() {
   const right = el('div', { class: 'p-4 space-y-4' });
   body.appendChild(left); body.appendChild(right);
 
-  // ---------- LEFT: Summary ----------
-  const itemsBox = el('div', { class: 'bg-slate-50 rounded-lg p-3 text-sm' });
+
+  // ---------- DISCOUNT UI (Clean Version) ----------
+  const applyModalDiscount = () => {
+      const cart = window.store.state.cart;
+      const gross = cart.totals.gross || 0;
+      let disc = 0;
+      
+      if (cart.discountType === 'percent') {
+          disc = gross * (Math.min(cart.discountValue, 100) / 100);
+      } else {
+          disc = Math.min(cart.discountValue, gross);
+      }
+      
+      cart.totals.discount = disc;
+      cart.totals.grand = Math.round(gross - disc + (cart.totals.serviceCharge || 0) + (cart.totals.roundOff || 0));
+      
+      const totalEl = document.getElementById('modal-grand-total');
+      if (totalEl) totalEl.innerText = fmtMoney(cart.totals.grand);
+      
+      // === REAL-TIME DISCOUNT ROW UPDATE ===
+      let discRow = document.getElementById('modal-discount-row');
+      const grandTotalRow = totalEl ? totalEl.parentElement : null;
+      const summaryContainer = grandTotalRow ? grandTotalRow.parentElement : null;
+      
+      if (disc > 0) {
+          if (!discRow && summaryContainer && grandTotalRow) {
+              discRow = document.createElement('div');
+              discRow.id = 'modal-discount-row';
+              discRow.className = 'flex justify-between';
+              discRow.innerHTML = '<span class="text-slate-500">Discount</span><span class="text-emerald-600 font-medium" id="modal-discount-val">- Rs 0.00</span>';
+              summaryContainer.insertBefore(discRow, grandTotalRow);
+          }
+          if (discRow) {
+              discRow.style.display = 'flex';
+              const val = document.getElementById('modal-discount-val');
+              if (val) val.innerText = '- ' + fmtMoney(disc);
+          }
+      } else if (discRow) {
+          discRow.style.display = 'none';
+      }
+  };
+
+  const btnAmt = el('button', {
+      class: `px-4 py-2 text-sm font-bold rounded-lg border transition ${window.store.state.cart.discountType === 'amount' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`,
+      onclick: () => {
+          window.store.state.cart.discountType = 'amount';
+          btnAmt.className = 'px-4 py-2 text-sm font-bold rounded-lg border transition bg-emerald-500 text-white border-emerald-600 shadow-sm';
+          btnPct.className = 'px-4 py-2 text-sm font-bold rounded-lg border transition bg-white text-slate-600 border-slate-300 hover:bg-slate-50';
+          applyModalDiscount();
+      }
+  }, '₹ (Amt)');
+
+  const btnPct = el('button', {
+      class: `px-4 py-2 text-sm font-bold rounded-lg border transition ${window.store.state.cart.discountType === 'percent' ? 'bg-emerald-500 text-white border-emerald-600 shadow-sm' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`,
+      onclick: () => {
+          window.store.state.cart.discountType = 'percent';
+          btnPct.className = 'px-4 py-2 text-sm font-bold rounded-lg border transition bg-emerald-500 text-white border-emerald-600 shadow-sm';
+          btnAmt.className = 'px-4 py-2 text-sm font-bold rounded-lg border transition bg-white text-slate-600 border-slate-300 hover:bg-slate-50';
+          applyModalDiscount();
+      }
+  }, '% (Pct)');
+
+  const discountBox = el('div', { class: 'bg-slate-50 border border-slate-200 rounded-lg p-3 mt-4' }, [
+    el('div', { class: 'font-semibold text-slate-700 mb-2 text-sm' }, 'Apply Discount'),
+    el('div', { class: 'flex gap-2 items-stretch' }, [
+        el('div', { class: 'flex gap-2 shrink-0' }, [btnAmt, btnPct]),
+        el('input', { 
+            type: 'number', 
+            class: 'w-full min-w-[80px] bg-white border border-slate-300 text-sm rounded-lg p-2 focus:outline-none text-right font-bold text-slate-800',
+            placeholder: '0',
+            value: window.store.state.cart.discountValue || '',
+            oninput: (e) => {
+                window.store.state.cart.discountValue = Number(e.target.value) || 0;
+                applyModalDiscount();
+            }
+        })
+    ])
+  ]);
+
+  left.appendChild(discountBox);
+
+  // RE-INJECTING MISSING ORDER SUMMARY BOX
+  const itemsBox = el('div', { class: 'bg-slate-50 rounded-lg p-3 text-sm mt-3' });
   itemsBox.appendChild(el('div', { class: 'font-semibold text-slate-700 mb-2' }, 'Order Summary'));
   cart.items.forEach(l => {
     itemsBox.appendChild(el('div', { class: 'flex justify-between py-0.5' }, [
@@ -71,7 +151,7 @@ export async function openCheckoutModal() {
     t.discount > 0 ? tRow('Discount', '− ' + fmtMoney(t.discount), 'text-emerald-600') : null,
     t.roundOff !== 0 ? tRow('Round Off', fmtMoney(t.roundOff)) : null,
     el('div', { class: 'flex justify-between pt-2 mt-2 border-t border-slate-300 text-base font-semibold text-slate-900' }, [
-      el('span', {}, 'Grand Total'), el('span', {}, fmtMoney(t.grand)),
+      el('span', {}, 'Grand Total'), el('span', { id: 'modal-grand-total' }, fmtMoney(t.grand)),
     ]),
   ].filter(Boolean)));
 
@@ -79,7 +159,7 @@ export async function openCheckoutModal() {
     el('div', { class: 'font-semibold text-slate-700 text-sm' }, 'Customer (optional)'),
     el('input', { type: 'tel', placeholder: 'Phone Number', value: state.customer.phone, class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.phone = e.target.value.trim(); } }),
     el('input', { type: 'text', placeholder: 'Name', value: state.customer.name, class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.name = e.target.value.trim(); } }),
-    el('input', { type: 'text', placeholder: 'GSTIN (B2B)', class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm', oninput: e => { state.customer.gstin = e.target.value.trim(); } }),
+
   ]));
 
   // ---------- RIGHT: Tip & Proceed ----------
@@ -124,10 +204,21 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
 
   let availableCustomers = [];
   const overlay = el('div', { class: 'fixed inset-0 bg-black/70 z-[90] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden max-h-[90vh]' });
+  
+  // Added 'relative' so the close button stays inside the card
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden max-h-[90vh]', style: 'position: relative;' });
+
+  // PERFECT INLINE STYLE CLOSE BUTTON
+
+  // PERFECT TOP-RIGHT CLOSE BUTTON
+  card.appendChild(el('button', {
+    style: 'position: absolute; top: 12px; right: 12px; z-index: 50; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #f1f5f9; color: #64748b; font-size: 18px; font-weight: bold; border: none; cursor: pointer;',
+    onclick: () => overlay.remove()
+  }, '×'));
 
   // Header
   card.appendChild(el('div', { class: 'px-5 py-4 bg-slate-50 border-b border-slate-200 text-center shrink-0' }, [
+
     el('div', { class: 'text-xs uppercase tracking-wide text-slate-500 font-semibold mb-1' }, 'Amount to Pay'),
     el('div', { class: 'text-3xl font-bold text-slate-900' }, fmtMoney(grandWithTip)),
     tipAmount > 0 ? el('div', { class: 'text-xs text-emerald-600 font-medium mt-1' }, `Includes ${fmtMoney(tipAmount)} tip`) : null,

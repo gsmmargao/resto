@@ -1,6 +1,6 @@
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
-import { el, fmtMoney, uuid, toast } from '../utils.js';
+import {el, fmtMoney, uuid, toast, confirmDialog} from '../utils.js';
 
 function notifyCartChanged() { window.dispatchEvent(new CustomEvent('cart:changed')); }
 
@@ -170,33 +170,6 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
   }
 
   const totals = el('div', { class: 'bg-white border-t border-slate-200 p-3 text-sm shrink-0' }, [
-    el('div', { class: 'flex items-center justify-between mb-2' }, [
-      el('span', { class: 'text-sm font-medium text-slate-600' }, 'Discount'),
-      el('div', { class: 'flex items-center bg-slate-100 rounded-lg border border-slate-300 overflow-hidden' }, [
-        el('div', { class: 'flex gap-1 p-1 border-r border-slate-300' }, [
-          el('button', {
-            class: `px-2 py-0.5 rounded text-xs font-bold transition ${(cart.discountType || 'amount') === 'amount' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`,
-            onclick: () => { store.state.cart.discountType = 'amount'; _computeTotals(store.state.cart); window.dispatchEvent(new CustomEvent('cart:changed')); }
-          }, '₹'),
-          el('button', {
-            class: `px-2 py-0.5 rounded text-xs font-bold transition ${cart.discountType === 'percent' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`,
-            onclick: () => { store.state.cart.discountType = 'percent'; _computeTotals(store.state.cart); window.dispatchEvent(new CustomEvent('cart:changed')); }
-          }, '%')
-        ]),
-        el('input', {
-          id: 'discount-input', type: 'text', inputmode: 'decimal',
-          class: 'w-16 bg-transparent text-sm font-bold focus:outline-none p-1.5 text-right',
-          placeholder: '0', value: cart.discountValue || '',
-          oninput: (e) => {
-            const val = e.target.value; const pos = e.target.selectionStart;
-            store.state.cart.discountValue = Number(val) || 0;
-            _computeTotals(store.state.cart);
-            window.dispatchEvent(new CustomEvent('cart:changed'));
-            setTimeout(() => { const inp = document.getElementById('discount-input'); if (inp) { inp.focus(); inp.setSelectionRange(pos, pos); } }, 10);
-          }
-        })
-      ])
-    ]),
     row('Subtotal', fmtMoney(t.gross)),
     t.discount > 0 ? row('Discount', `− ${fmtMoney(t.discount)}`, 'text-emerald-600') : null,
     t.serviceCharge > 0 ? row('Service Charge', fmtMoney(t.serviceCharge)) : null,
@@ -440,3 +413,24 @@ async function openCancelOrderModal(onClear) {
   document.body.appendChild(overlay);
   setTimeout(() => passIn.focus(), 50);
 }
+
+
+// Highlight menu items that are currently in the cart
+window.highlightCartItems = function() {
+    const cart = window.store.state.cart;
+    const cartItemIds = new Set((cart.items || []).map(l => l.menuItemId));
+    
+    document.querySelectorAll('[data-menu-item-id]').forEach(el => {
+        const itemId = el.getAttribute('data-menu-item-id');
+        if (cartItemIds.has(itemId)) {
+            el.classList.add('menu-item-added');
+        } else {
+            el.classList.remove('menu-item-added');
+        }
+    });
+};
+
+// Auto-highlight on cart changes
+window.addEventListener('cart:changed', () => {
+    setTimeout(() => window.highlightCartItems(), 50);
+});
