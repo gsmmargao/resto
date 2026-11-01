@@ -24,8 +24,16 @@ export async function renderCashbookDetailed() {
       .gte('created_at', rangeStart().toISOString())
       .lte('created_at', rangeEnd().toISOString());
 
+    const { data: cashMovements } = await supabase.from('cash_movements')
+      .select('person_name, movement_type, amount, created_at, reason')
+      .eq('outlet_id', outletId)
+      .gte('created_at', rangeStart().toISOString())
+      .lte('created_at', rangeEnd().toISOString())
+      .not('person_name', 'is', null);
+
     let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
     const ledger = [];
+    const personMap = new Map();
 
     (payments || []).forEach(p => {
       const amt = Number(p.amount || 0);
@@ -60,6 +68,21 @@ export async function renderCashbookDetailed() {
             out: amt
         });
     });
+
+    (cashMovements || []).forEach(m => {
+        if (!m.person_name) return;
+        const name = m.person_name.trim();
+        if (!personMap.has(name)) personMap.set(name, 0);
+        
+        if (m.movement_type === 'cash_out') {
+            personMap.set(name, personMap.get(name) + Number(m.amount));
+        } else if (m.movement_type === 'cash_in') {
+            personMap.set(name, personMap.get(name) - Number(m.amount));
+        }
+    });
+    const personLedger = Array.from(personMap.entries())
+        .filter(([name, balance]) => balance !== 0)
+        .sort((a,b) => b[1] - a[1]);
 
     ledger.sort((a,b) => new Date(b.time) - new Date(a.time));
 
@@ -168,10 +191,103 @@ export async function renderCashbookDetailed() {
 
     wrapper.appendChild(summaryCard);
 
+    // --- PERSON LEDGER SECTION ---
+    if (personLedger.length > 0) {
+        const personCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-6' });
+        personCard.innerHTML = `
+          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+            <h3 class="font-bold text-slate-800 text-sm">Cash Held by Person (Drawer Withdrawals)</h3>
+          </div>
+          <table class="w-full">
+            <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
+              <tr>
+                <th class="px-4 py-3 text-left">Person Name</th>
+                <th class="px-4 py-3 text-right">Amount Held</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${personLedger.map(([name, balance]) => `
+                <tr class="border-b border-slate-50 hover:bg-slate-50">
+                  <td class="px-4 py-3 font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer person-ledger-link" data-name="${name}">${name}</td>
+                  <td class="px-4 py-3 text-right font-bold text-indigo-600">₹${balance.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+        wrapper.appendChild(personCard);
+
+        // Attach click events to open the ledger
+        personCard.querySelectorAll('.person-ledger-link').forEach(link => {
+            link.onclick = () => {
+                const personName = link.getAttribute('data-name');
+                // Filter movements for this person
+                const personMovements = (cashMovements || []).filter(m => m.person_name === personName);
+                openPersonLedgerModal(personName, personMovements);
+            };
+        });
+    }
+
   } catch (err) {
     console.error(err);
     wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
   }
 
   return wrapper;
+}
+
+
+function openPersonLedgerModal(personName, movements) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col' });
+
+  // Calculate total balance
+  let totalHeld = 0;
+  const sortedMovements = [...movements].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+  sortedMovements.forEach(m => {
+      if (m.movement_type === 'cash_out') totalHeld += Number(m.amount);
+      if (m.movement_type === 'cash_in') totalHeld -= Number(m.amount);
+  });
+
+  const header = el('div', { class: 'flex justify-between items-center border-b pb-3 shrink-0' }, [
+      el('div', {}, [
+          el('h3', { class: 'font-bold text-lg text-slate-800' }, `${personName}'s Cash Ledger`),
+          el('div', { class: 'text-sm text-slate-500 mt-1' }, [
+              'Total Cash Held: ',
+              el('span', { class: 'font-bold text-indigo-600' }, fmtMoney(totalHeld))
+          ])
+      ]),
+      el('button', { class: 'text-slate-400 hover:text-slate-800 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
+  ]);
+
+  const tableWrap = el('div', { class: 'overflow-y-auto flex-1' });
+  const table = el('table', { class: 'w-full text-left' }, [
+      el('thead', { class: 'bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0' }, [
+          el('tr', {}, [
+              el('th', { class: 'p-3' }, 'Date & Time'),
+              el('th', { class: 'p-3' }, 'Type'),
+              el('th', { class: 'p-3' }, 'Reason'),
+              el('th', { class: 'p-3 text-right' }, 'Amount')
+          ])
+      ]),
+      el('tbody', {}, sortedMovements.map(m => {
+          const isOut = m.movement_type === 'cash_out';
+          return el('tr', { class: 'border-b border-slate-100 text-sm hover:bg-slate-50' }, [
+              el('td', { class: 'p-3 text-slate-600 whitespace-nowrap' }, new Date(m.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })),
+              el('td', { class: `p-3 font-semibold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, isOut ? 'Cash Taken' : 'Cash Returned'),
+              el('td', { class: 'p-3 text-slate-500' }, m.reason || '—'),
+              el('td', { class: `p-3 text-right font-bold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, `${isOut ? '-' : '+'}₹${Number(m.amount).toFixed(2)}`)
+          ]);
+      }))
+  ]);
+
+  tableWrap.appendChild(table);
+
+  card.appendChild(header);
+  card.appendChild(tableWrap);
+  card.appendChild(el('button', { class: 'w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium mt-2 shrink-0', onclick: () => overlay.remove() }, 'Close'));
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
 }

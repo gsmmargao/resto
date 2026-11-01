@@ -1,0 +1,48 @@
+{
+  "name": "resto",
+  "version": "1.0.0",
+  "description": "A mobile-responsive Restaurant POS built on Vanilla JS + Tailwind + Supabase.",
+  "main": "config.example.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gsmmargao/resto.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/gsmmargao/resto/issues"
+  },
+  "homepage": "https://github.com/gsmmargao/resto#readme",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  },
+  "dependencies": {
+    "braces": "^3.0.3",
+    "detect-libc": "^1.0.3",
+    "enhanced-resolve": "^5.26.0",
+    "fill-range": "^7.1.1",
+    "graceful-fs": "^4.2.11",
+    "is-extglob": "^2.1.1",
+    "is-glob": "^4.0.3",
+    "is-number": "^7.0.0",
+    "jiti": "^2.7.0",
+    "lightningcss": "^1.32.0",
+    "lightningcss-darwin-x64": "^1.32.0",
+    "magic-string": "^0.30.21",
+    "micromatch": "^4.0.8",
+    "mri": "^1.2.0",
+    "node-addon-api": "^7.1.1",
+    "picocolors": "^1.1.1",
+    "picomatch": "^2.3.2",
+    "source-map-js": "^1.2.2",
+    "tapable": "^2.3.3",
+    "to-regex-range": "^5.0.1"
+  }
+}
