@@ -1,5 +1,5 @@
 {
-  "installCommand": "npm ci && npm install --no-save --platform=linuxmusl --arch=x64 lightningcss @tailwindcss/oxide",
-  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "buildCommand": "echo \"No build step needed\"",
   "framework": null
 }
