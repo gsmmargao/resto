@@ -130,7 +130,6 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     
     cart.orderType === 'dine_in' ? el('button', {
       class: `w-full text-left px-3 py-2 rounded-md border text-sm flex justify-between items-center ${cart.tableId ? 'border-indigo-300 bg-indigo-50 text-indigo-800' : 'border-slate-300 text-slate-600 hover:border-indigo-400'} ${cart.orderId ? 'opacity-60' : ''}`,
-      
       onclick: () => { if (cart.orderId) { toast('Table locked', 'warn'); return; } onPickTable(); },
     }, [
       el('span', {}, cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away') : (cart.tableId ? `Table: ${store.state.tables.find(x=>x.id===cart.tableId)?.name || '—'}` : 'Select table…')),
@@ -138,7 +137,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     ]) : null,
   ].filter(Boolean));
 
-  const lines = el('div', { class: 'flex-1 overflow-y-auto bg-slate-50', id: 'cart-scroll-area' });
+  const lines = el('div', { class: 'bg-slate-50 lg:flex-1 lg:overflow-y-auto', id: 'cart-scroll-area' });
   if (!cart.items.length) lines.appendChild(el('div', { class: 'p-6 text-center text-slate-400 text-sm' }, 'Cart is empty'));
   else cart.items.forEach(l => lines.appendChild(buildLine(l)));
 
@@ -146,59 +145,54 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     el('span', { class: 'text-slate-500' }, label), el('span', { class: 'text-slate-800 font-medium' }, value),
   ]);
 
-  // Floating Scroll Buttons
-  const scrollControls = el('div', { class: 'absolute bottom-32 right-3 flex flex-col gap-2 z-50 lg:hidden' }, [
-    el('button', { 
-      class: 'w-9 h-9 rounded-full bg-slate-800/80 text-white shadow-lg flex items-center justify-center hover:bg-slate-900 transition', 
-      onclick: () => { document.getElementById('cart-scroll-area').scrollTo({ top: 0, behavior: 'smooth' }); } 
-    }, '↑'),
-    el('button', { 
-      class: 'w-9 h-9 rounded-full bg-slate-800/80 text-white shadow-lg flex items-center justify-center hover:bg-slate-900 transition', 
-      onclick: () => { const e = document.getElementById('cart-scroll-area'); e.scrollTo({ top: e.scrollHeight, behavior: 'smooth' }); } 
-    }, '↓')
-  ]);
-  
-  wrap.appendChild(scrollControls);
+  // Window Scroll Buttons (Fixed to viewport)
+  if (window.innerWidth < 1024) {
+      const existing = document.getElementById('floating-scroll-btns');
+      if (existing) existing.remove();
 
-  const totals = el('div', { class: 'bg-white border-t border-slate-200 p-3 text-sm' }, [
+      const scrollControls = el('div', { id: 'floating-scroll-btns', class: 'fixed right-4 bottom-4 flex flex-col gap-2 z-[9999]' }, [
+          el('button', { 
+            class: 'w-10 h-10 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg opacity-90 hover:opacity-100', 
+            onclick: () => { 
+                const container = document.querySelector('.overflow-y-auto') || window;
+                container.scrollTo({ top: 0, behavior: 'smooth' }); 
+            } 
+          }, '↑'),
+          el('button', { 
+            class: 'w-10 h-10 rounded-full bg-slate-800 text-white flex items-center justify-center shadow-lg opacity-90 hover:opacity-100', 
+            onclick: () => { 
+                const container = document.querySelector('.overflow-y-auto') || window;
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' }); 
+            } 
+          }, '↓')
+      ]);
+      document.body.appendChild(scrollControls);
+  }
+
+  const totals = el('div', { class: 'bg-white border-t border-slate-200 p-3 text-sm shrink-0' }, [
     el('div', { class: 'flex items-center justify-between mb-2' }, [
       el('span', { class: 'text-sm font-medium text-slate-600' }, 'Discount'),
       el('div', { class: 'flex items-center bg-slate-100 rounded-lg border border-slate-300 overflow-hidden' }, [
-        el('div', { class: 'flex border-r border-slate-300' }, [
+        el('div', { class: 'flex gap-1 p-1 border-r border-slate-300' }, [
           el('button', {
-            class: `px-3 py-1.5 text-sm font-bold transition ${(cart.discountType || 'amount') === 'amount' ? 'bg-slate-300 text-slate-900' : 'text-slate-500 hover:bg-slate-200'}`,
-            onclick: () => {
-              store.state.cart.discountType = 'amount';
-              _computeTotals(store.state.cart);
-              window.dispatchEvent(new CustomEvent('cart:changed'));
-            }
+            class: `px-2 py-0.5 rounded text-xs font-bold transition ${(cart.discountType || 'amount') === 'amount' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`,
+            onclick: () => { store.state.cart.discountType = 'amount'; _computeTotals(store.state.cart); window.dispatchEvent(new CustomEvent('cart:changed')); }
           }, '₹'),
           el('button', {
-            class: `px-3 py-1.5 text-sm font-bold transition ${cart.discountType === 'percent' ? 'bg-slate-300 text-slate-900' : 'text-slate-500 hover:bg-slate-200'}`,
-            onclick: () => {
-              store.state.cart.discountType = 'percent';
-              _computeTotals(store.state.cart);
-              window.dispatchEvent(new CustomEvent('cart:changed'));
-            }
+            class: `px-2 py-0.5 rounded text-xs font-bold transition ${cart.discountType === 'percent' ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`,
+            onclick: () => { store.state.cart.discountType = 'percent'; _computeTotals(store.state.cart); window.dispatchEvent(new CustomEvent('cart:changed')); }
           }, '%')
         ]),
         el('input', {
-          id: 'discount-input',
-          type: 'text',
-          inputmode: 'decimal',
+          id: 'discount-input', type: 'text', inputmode: 'decimal',
           class: 'w-16 bg-transparent text-sm font-bold focus:outline-none p-1.5 text-right',
-          placeholder: '0',
-          value: cart.discountValue || '',
+          placeholder: '0', value: cart.discountValue || '',
           oninput: (e) => {
-            const val = e.target.value;
-            const pos = e.target.selectionStart;
+            const val = e.target.value; const pos = e.target.selectionStart;
             store.state.cart.discountValue = Number(val) || 0;
             _computeTotals(store.state.cart);
             window.dispatchEvent(new CustomEvent('cart:changed'));
-            setTimeout(() => {
-              const inp = document.getElementById('discount-input');
-              if (inp) { inp.focus(); inp.setSelectionRange(pos, pos); }
-            }, 10);
+            setTimeout(() => { const inp = document.getElementById('discount-input'); if (inp) { inp.focus(); inp.setSelectionRange(pos, pos); } }, 10);
           }
         })
       ])
@@ -214,24 +208,18 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 
   const hasNewItems = cart.items.some(l => !l._saved);
   
-  const actions = el('div', { class: 'p-3 bg-white border-t border-slate-200 grid grid-cols-2 gap-2' }, [
+  const actions = el('div', { class: 'p-3 bg-white border-t border-slate-200 grid grid-cols-2 gap-2 shrink-0' }, [
     el('button', {
       class: 'col-span-2 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium',
       onclick: () => {
         if (cart.orderId) {
-          if (!hasNewItems) {
-            toast('No new items to discard', 'warn');
-            return;
-          }
-          // Only remove UNSAVED items - keep locked (SENT) items
-          cart.items = cart.items.filter(l => l._saved);
-          _computeTotals(cart);
-          notifyCartChanged();
-        } else {
-          onClear();
-        }
-      },
-    }, cart.orderId ? 'Discard New Items' : 'Clear Cart'),
+          if (!hasNewItems) { toast('No new items to discard', 'warn'); return; }
+          confirmDialog('Discard new items?', 'Confirm').then(ok => {
+            if (ok) { cart.items = cart.items.filter(l => l._saved); _computeTotals(cart); window.dispatchEvent(new CustomEvent('cart:changed')); }
+          });
+        } else { onClear(); }
+      }
+    }, hasNewItems ? 'Discard New Items' : 'Clear Cart'),
 
     cart.orderId ? el('button', {
       class: 'col-span-2 py-2.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-sm font-medium',
@@ -245,10 +233,11 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 
     el('button', {
       class: `col-span-2 py-3 rounded-lg text-base font-semibold shadow-sm transition ${cart.orderId ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`,
-      
       onclick: () => { if (cart.orderId) onCheckout(); else toast('Send to kitchen first', 'warn'); },
     }, cart.orderId ? `Checkout • ${fmtMoney(t.grand)}` : 'Checkout • —'),
   ].filter(Boolean));
+
+  
 
   root.appendChild(header);
   root.appendChild(lines);
@@ -257,6 +246,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 }
 
 function buildLine(l) {
+  if (!l || !l.name) return el('div', { class: 'p-2 text-red-500 text-xs' }, 'Unknown Item');
   const isSaved = !!l._saved;
   return el('div', {
     class: `px-3 py-2 border-b border-slate-200 ${isSaved ? 'bg-slate-100/60' : 'bg-white'}`,

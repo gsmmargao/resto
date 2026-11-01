@@ -36,7 +36,7 @@ export async function renderDashboard(root) {
     }, '← Back to Tables') : null,
   ].filter(Boolean));
 
-  const content = el('div', { class: 'flex-1 min-h-0 overflow-hidden' });
+  const content = el('div', { class: 'flex-1 min-h-0 overflow-y-auto lg:overflow-hidden' });
   wrapper.appendChild(subnav);
   wrapper.appendChild(content);
   root.appendChild(wrapper);
@@ -117,11 +117,16 @@ function safeCheckout() {
 }
 
 function renderPOS(root) {
-  // Use flex-col for mobile (stacked), grid for desktop (side-by-side)
-  const layout = el('div', { class: 'h-full flex flex-col lg:grid lg:grid-cols-12 lg:gap-0' });
-
-  const left  = el('div', { class: 'flex-1 min-h-0 lg:col-span-7 xl:col-span-8 lg:border-r lg:border-slate-200 flex flex-col' });
-  const right = el('div', { class: 'flex-1 min-h-0 lg:col-span-5 xl:col-span-4 flex flex-col border-t lg:border-t-0 border-slate-200 relative' });
+  // Pure flexbox for guaranteed mobile stacking
+  // NATURAL SCROLL LAYOUT
+  // Mobile: flows naturally (Menu then Cart). Desktop: side-by-side fixed height.
+  const layout = el('div', { class: 'w-full flex flex-col lg:flex-row lg:h-full lg:overflow-hidden' });
+  
+  // Menu Panel
+  const left = el('div', { class: 'w-full lg:w-2/3 lg:h-full lg:overflow-y-auto lg:border-r border-slate-200' });
+  
+  // Cart Panel (Flows naturally on mobile, fixed on desktop)
+  const right = el('div', { class: 'w-full lg:w-1/3 lg:h-full flex flex-col bg-white border-t lg:border-t-0 border-slate-200 relative' });
 
   renderMenuPanel(left, { onAddItem: ({ item, variant }) => addToCart({ item, variant }) });
 
