@@ -12,6 +12,17 @@ export function register(name, handler) {
 }
 
 export function navigate(name, params = {}, retries = 20) {
+  // --- RBAC ROUTER GUARD ---
+  const role = store.state.member?.role;
+  if (role === 'purchaser' && name !== 'reports' && name !== 'login' && name !== 'signup') {
+      console.warn('[router] Purchaser restricted to Reports. Redirecting...');
+      name = 'reports';
+      if (location.hash !== '#reports') {
+          history.replaceState({ route: 'reports', params: {} }, '', '#reports');
+      }
+  }
+  // -------------------------
+
   if (!routerState.routes.has(name)) { 
     console.warn(`[router] Route "${name}" not ready, retrying in 50ms (${retries} left)...`);
     

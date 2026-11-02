@@ -132,6 +132,10 @@ function renderShell(root) {
       else if (role === 'store_keeper') {
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('stock-balance') }, '📋 Stock Balance'));
       }
+      // PURCHASER gets ONLY Reports
+      else if (role === 'purchaser') {
+        navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('reports') }, 'Reports'));
+      }
       // OWNER / MANAGER / CASHIER get normal tabs
       else {
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('dashboard') }, 'POS'));
