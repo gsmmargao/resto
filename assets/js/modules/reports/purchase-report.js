@@ -90,13 +90,19 @@ export async function renderPurchaseReport() {
     data.forEach(row => {
       const tr = el('tr', { class: 'border-b border-slate-50 hover:bg-slate-50/50' });
       
-      const statusBadge = row.is_verified 
+      const currentStatus = row.status || (row.is_verified ? 'verified' : 'pending');
+      const statusBadge = currentStatus === 'verified'
         ? '<span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold">VERIFIED</span>'
+        : currentStatus === 'rejected'
+        ? '<span class="px-2 py-1 bg-red-100 text-red-700 rounded text-[10px] font-bold">REJECTED</span>'
         : '<span class="px-2 py-1 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">PENDING</span>';
 
-      const actionCol = isAdmin && !row.is_verified 
-        ? `<button class="px-2 py-1 bg-emerald-500 text-white rounded font-bold text-xs hover:bg-emerald-600 verify-btn" data-id="${row.id}">Verify ✓</button>` 
-        : `<span class="text-slate-600 font-medium">${row.verified_by_name || '—'}</span>`;
+      const actionCol = isAdmin && currentStatus === 'pending'
+        ? `<div class="flex gap-1 justify-center">
+             <button class="px-2 py-1 bg-emerald-500 text-white rounded font-bold text-[10px] hover:bg-emerald-600 action-btn" data-id="${row.id}" data-action="verified">Verify ✓</button>
+             <button class="px-2 py-1 bg-red-500 text-white rounded font-bold text-[10px] hover:bg-red-600 action-btn" data-id="${row.id}" data-action="rejected">Reject ✗</button>
+           </div>`
+        : `<span class="text-slate-600 font-medium text-xs">${row.verified_by_name || '—'}</span>`;
 
       tr.innerHTML = `
         <td class="px-4 py-3 text-xs text-slate-500">${new Date(row.created_at).toLocaleDateString('en-GB')}</td>
