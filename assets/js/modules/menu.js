@@ -148,9 +148,15 @@ export function renderMenuPanel(root, { onAddItem }) {
           // Ignore clicks on the +/- buttons
           if (e.target.closest('.qty-btn')) return; 
           
-          if (vars.length === 0) onAddItem({ item, variant: null });
-          else if (vars.length === 1) onAddItem({ item, variant: vars[0] });
-          else openVariantPicker(item, vars, onAddItem);
+          const triggerAdd = (v) => {
+              openItemModal(item, v, 1, '', false, (data) => {
+                  if (typeof onAddItem === 'function') onAddItem(data);
+              });
+          };
+
+          if (vars.length === 0) triggerAdd(null);
+          else if (vars.length === 1) triggerAdd(vars[0]);
+          else openVariantPicker(item, vars, (data) => triggerAdd(data.variant));
         },
       }, [
         el('div', { class: 'flex items-start gap-2' }, [
@@ -210,6 +216,59 @@ export function renderMenuPanel(root, { onAddItem }) {
       // Restore scroll position
       list.scrollTop = scrollPos;
   });
+}
+
+
+export function openItemModal(item, variant, initialQty = 1, initialNotes = '', isEdit = false, onSave) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col' });
+  
+  const price = variant?.price ?? item.base_price;
+  let qty = initialQty;
+  
+  // Header
+  card.appendChild(el('div', { class: 'p-4 border-b border-slate-100' }, [
+    el('h3', { class: 'font-bold text-lg text-slate-800' }, `${item.name} ${variant ? '(' + variant.name + ')' : ''}`),
+    el('div', { class: 'text-slate-500 font-medium' }, `₹ ${Number(price).toFixed(2)}`)
+  ]));
+
+  // Body
+  const notesIn = el('input', { type: 'text', placeholder: 'Cooking instructions (optional)', class: 'w-full mt-4 p-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-400', value: initialNotes });
+  const qtyDisplay = el('div', { class: 'text-xl font-bold w-12 text-center' }, '1');
+  
+  card.appendChild(el('div', { class: 'p-4' }, [
+    notesIn,
+    el('div', { class: 'flex items-center justify-center gap-4 mt-6' }, [
+      el('button', { 
+        class: 'w-10 h-10 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xl flex items-center justify-center', 
+        onclick: () => { if (qty > 0) { qty--; qtyDisplay.innerText = qty; if(isEdit) document.getElementById('modal-confirm-btn').innerText = qty === 0 ? 'Remove Item' : 'Save'; } } 
+      }, '−'),
+      qtyDisplay,
+      el('button', { 
+        class: 'w-10 h-10 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xl flex items-center justify-center', 
+        onclick: () => { qty++; qtyDisplay.innerText = qty; if(isEdit) document.getElementById('modal-confirm-btn').innerText = 'Save'; } 
+      }, '+')
+    ])
+  ]));
+
+  // Footer
+  const actions = el('div', { class: 'p-4 border-t border-slate-100 grid grid-cols-2 gap-2' }, [
+    el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm', onclick: () => overlay.remove() }, 'Cancel'),
+    el('button', { 
+      id: 'modal-confirm-btn',
+      class: 'py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm',
+      onclick: () => {
+        if (typeof onSave === 'function') {
+            onSave({ item, variant, qty, notes: notesIn.value.trim() });
+        }
+        overlay.remove();
+      }
+    }, isEdit ? (qty === 0 ? 'Remove Item' : 'Save') : 'Confirm')
+  ]);
+  card.appendChild(actions);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
 }
 
 function openVariantPicker(item, variants, onAddItem) {

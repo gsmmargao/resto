@@ -1,8 +1,8 @@
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
 import { el, fmtMoney, fmtRelative, toast, confirmDialog } from '../utils.js';
-import { renderMenuPanel } from './menu.js';
-import { renderCartPanel, addToCart, clearCart, loadOrderIntoCart } from './cart.js';
+import { renderMenuPanel, openItemModal } from './menu.js';
+import { renderCartPanel, addToCart, clearCart, loadOrderIntoCart, updateItemLine } from './cart.js';
 import { openTableActionModal, renderTablesView, loadTables, renderTablePicker } from './tables.js';
 import { sendKOT } from './kot.js';
 import { openCheckoutModal } from './billing.js';
@@ -118,20 +118,37 @@ function safeCheckout() {
 }
 
 function renderPOS(root) {
-  // Pure flexbox for guaranteed mobile stacking
   // NATURAL SCROLL LAYOUT
-  // Mobile: flows naturally (Menu then Cart). Desktop: side-by-side fixed height.
-  const layout = el('div', { class: 'w-full flex flex-col lg:flex-row lg:h-full lg:overflow-hidden' });
+  // The entire page scrolls. The menu flows down, and the cart follows it.
+  const layout = el('div', { 
+    class: 'w-full flex flex-col lg:flex-row',
+    style: 'height: 100dvh; max-height: 100dvh; overflow: hidden;'
+  });
   
-  // Menu Panel
-  const left = el('div', { class: 'w-full lg:w-2/3 lg:h-full lg:overflow-y-auto lg:border-r border-slate-200' });
+  // MENU PANEL (Takes remaining space, scrolls internally)
+  const left = el('div', { 
+    class: 'w-full lg:w-2/3 lg:border-r border-slate-200',
+    style: 'flex: 1; overflow-y: auto; min-height: 0;'
+  });
   
-  // Cart Panel (Flows naturally on mobile, fixed on desktop)
-  const right = el('div', { class: 'w-full lg:w-1/3 lg:h-full flex flex-col bg-white border-t lg:border-t-0 border-slate-200 relative' });
+  // CART PANEL (Fixed 50% height on mobile, scrolls internally)
+  const right = el('div', { 
+    class: 'w-full lg:w-1/3 flex flex-col bg-white border-t lg:border-t-0 border-slate-200',
+    style: 'height: 50dvh; max-height: 50dvh; flex-shrink: 0; overflow: hidden; position: relative; display: flex; flex-direction: column;'
+  });
 
-  renderMenuPanel(left, { onAddItem: ({ item, variant }) => addToCart({ item, variant }) });
+  renderMenuPanel(left, { onAddItem: ({ item, variant, qty, notes }) => addToCart({ item, variant, qty, notes }) });
 
   const cartOpts = {
+    onEditItem: (line) => {
+        const item = window.store.state.menuItems.find(m => String(m.id) === String(line.menuItemId));
+        const variant = window.store.state.variants.find(v => v.id === line.variantId) || null;
+        if (!item) { toast('Item not found', 'error'); return; }
+        
+        openItemModal(item, variant, line.qty, line.notes, true, (data) => {
+            updateItemLine(line.id, data.qty, data.notes);
+        });
+    },
     onPickTable: () => renderTablePicker(document.body, (t) => {
       store.state.cart.tableId = t.id;
       window.dispatchEvent(new CustomEvent('cart:changed'));

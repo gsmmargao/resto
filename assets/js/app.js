@@ -28,7 +28,7 @@ import { startMonitoring, buildConnectionBadge, openQueueModal, sync } from './m
 
 import { loadEntitlements, buildPlanBadge, maybeTrialBanner, isReadOnly, isTrialExpiringSoon, isTrialExpired } from './modules/entitlements.js';
 import { navigate as navTo } from './router.js';
-import { loadCatalog } from './modules/menu.js?v=698988f56b';
+import { loadCatalog } from './modules/menu.js?v=89c8336c30';
 
 // Dynamic import wrapper for loadOpenShift
 async function loadOpenShiftWrapper(...args) {
@@ -170,7 +170,7 @@ function renderShell(root) {
   paintTopbar();
   window.addEventListener('hashchange', paintTopbar);
 
-  const view = el('div', { id: 'app-view', class: 'flex-1 min-h-0' });
+  const view = el('div', { id: 'app-view', class: 'flex-1 min-h-0', style: 'overflow: hidden; height: 100%;' });
 
   shell.appendChild(topbar);
   shell.appendChild(view);
