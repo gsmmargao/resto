@@ -115,7 +115,20 @@ function renderFilterBar(root) {
   bar.appendChild(el('input', {
     type: 'search', placeholder: 'Search item name…', value: state.search,
     class: 'flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
-    oninput: (e) => { state.search = e.target.value.toLowerCase(); paint(root); },
+    oninput: (e) => {
+      const cursor = e.target.selectionStart;
+      const rawVal = e.target.value;
+      state.search = rawVal.toLowerCase();
+      paint(root);
+      setTimeout(() => {
+        const inp = root.querySelector('input[type="search"]');
+        if (inp) {
+          inp.focus();
+          inp.value = rawVal;
+          inp.setSelectionRange(cursor, cursor);
+        }
+      }, 10);
+    },
   }));
 
   bar.appendChild(el('select', {

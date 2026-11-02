@@ -137,7 +137,7 @@ function renderPOS(root) {
     style: 'height: 50dvh; max-height: 50dvh; flex-shrink: 0; overflow: hidden; position: relative; display: flex; flex-direction: column;'
   });
 
-  renderMenuPanel(left, { onAddItem: ({ item, variant, qty, notes }) => addToCart({ item, variant, qty, notes }) });
+  renderMenuPanel(left, { onAddItem: ({ item, variant, qty, notes, custom_price }) => addToCart({ item, variant, qty, notes, custom_price }) });
 
   const cartOpts = {
     onEditItem: (line) => {

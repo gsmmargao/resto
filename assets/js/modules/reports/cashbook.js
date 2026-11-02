@@ -1,3 +1,4 @@
+import { openPersonLedgerModal } from "./modals.js";
 import { supabase } from '../../supabase-client.js';
 import { store } from '../../store.js';
 import { el, fmtMoney } from '../../utils.js';
@@ -176,7 +177,7 @@ export async function renderCashbookDetailed() {
             </thead>
             <tbody>
               ${personLedger.map(([name, balance]) => `
-                <tr class="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onclick="window.openPersonLedger('${name}', ${JSON.stringify(personLedger)}, ${JSON.stringify(cashMovements)})">
+                <tr class="border-b border-slate-50 hover:bg-slate-50 cursor-pointer ledger-row" data-name="${name}">
                   <td class="px-4 py-3 font-bold text-indigo-600 underline">${name}</td>
                   <td class="px-4 py-3 text-right font-bold text-indigo-600">₹${balance.toFixed(2)}</td>
                 </tr>
@@ -187,6 +188,13 @@ export async function renderCashbookDetailed() {
       </div>
       ` : ''}
     `;
+
+    // Attach safe click listeners for Person Ledger
+    wrapper.querySelectorAll(".ledger-row").forEach(tr => {
+        tr.addEventListener("click", () => {
+            openPersonLedgerModal(tr.dataset.name, cashMovements);
+        });
+    });
 
     // --- PAGINATION LOGIC ---
     let currentPage = 1;
@@ -286,6 +294,5 @@ export async function renderCashbookDetailed() {
     console.error(err);
     wrapper.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading cashbook: ${err.message}</div>`;
   }
-
   return wrapper;
 }

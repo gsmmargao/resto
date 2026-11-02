@@ -107,7 +107,20 @@ function paint(root) {
   filterBar.appendChild(el('input', {
     type: 'search', placeholder: 'Search items…', value: state.search,
     class: 'flex-1 px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
-    oninput: (e) => { state.search = e.target.value.toLowerCase(); paint(root); },
+    oninput: (e) => {
+      const cursor = e.target.selectionStart;
+      const rawVal = e.target.value;
+      state.search = rawVal.toLowerCase();
+      paint(root);
+      setTimeout(() => {
+        const inp = root.querySelector('input[type="search"]');
+        if (inp) {
+          inp.focus();
+          inp.value = rawVal;
+          inp.setSelectionRange(cursor, cursor);
+        }
+      }, 10);
+    },
   }));
   filterBar.appendChild(el('select', {
     class: 'px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500',
@@ -211,7 +224,7 @@ async function openItemEditor(root, item) {
   const isNew = !item;
   const draft = item ? { ...item } : {
     tenant_id: store.state.tenant.id,
-    name: '', short_name: '', food_category: 'food', base_price: 0, is_active: true
+    name: '', short_name: '', food_category: 'food', base_price: 0, is_active: true, is_as_per_size: false
   };
 
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-center justify-center p-4' });
@@ -259,7 +272,16 @@ async function openItemEditor(root, item) {
   card.appendChild(field('Item Name', nameIn));
   card.appendChild(field('Shortcut (KOT)', shortIn));
   card.appendChild(field('Category', catIn));
-  card.appendChild(field('Amount', priceIn));
+  
+  const asPerSizeCb = el('input', { type: 'checkbox', class: 'mr-2 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500', checked: draft.is_as_per_size, 
+    onchange: e => {
+      draft.is_as_per_size = e.target.checked;
+      if (draft.is_as_per_size) { draft.base_price = 0; priceIn.value = 0; priceIn.disabled = true; priceIn.classList.add('bg-slate-100'); }
+      else { priceIn.disabled = false; priceIn.classList.remove('bg-slate-100'); }
+    }
+  });
+  const asPerSizeWrap = el('label', { class: 'flex items-center mt-2 text-sm text-slate-600 cursor-pointer' }, [asPerSizeCb, 'As per size (Amount = 0)']);
+  card.appendChild(field('Amount', el('div', {}, [priceIn, asPerSizeWrap])));
 
   const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' }, [
     el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Cancel'),
@@ -276,7 +298,7 @@ async function openItemEditor(root, item) {
             name: draft.name.trim(),
             short_name: draft.short_name.trim().toUpperCase() || null,
             food_category: draft.food_category,
-            base_price: Number(draft.base_price) || 0,
+            base_price: Number(draft.base_price) || 0, is_as_per_size: draft.is_as_per_size,
             is_active: true
           };
           if (isNew) {

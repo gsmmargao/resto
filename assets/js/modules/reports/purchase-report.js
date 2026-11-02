@@ -45,6 +45,7 @@ export async function renderPurchaseReport() {
 
     formCard.append(itemIn, supplierIn, amountIn, submitBtn);
     wrap.appendChild(formCard);
+    return wrap; // <--- STOP RENDERING FOR PURCHASER
   }
 
   // 2. The Table

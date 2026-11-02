@@ -52,11 +52,12 @@ async function printPreBill(cart, t) {
 
 function notifyCartChanged() { window.dispatchEvent(new CustomEvent('cart:changed')); }
 
-export function addToCart({ item, variant, addons = [], notes = '', qty = 1 }) {
+export function addToCart({ item, variant, addons = [], notes = '', qty = 1, custom_price = null }) {
   const cart = store.state.cart;
-  const price = variant?.price ?? item.base_price;
+  const price = custom_price !== null && custom_price !== undefined ? custom_price : (variant?.price ?? item.base_price);
   const taxRate = item.tax_rate ?? 0.05;
-  const key = `${item.id}::${variant?.id || ''}::${notes}`;
+  const customPriceStr = custom_price !== null && custom_price !== undefined ? `::${custom_price}` : '';
+  const key = `${item.id}::${variant?.id || ''}::${notes}${customPriceStr}`;
   const existing = cart.items.find(l => l._key === key && !l._saved);
   if (existing) {
     existing.qty += qty;

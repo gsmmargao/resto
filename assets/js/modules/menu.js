@@ -185,6 +185,10 @@ export function renderMenuPanel(root, { onAddItem }) {
                   class: 'qty-btn w-7 h-7 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 rounded font-bold text-lg transition', 
                   onclick: (e) => {
                       e.stopPropagation();
+                      if (item.is_as_per_size) {
+                          triggerAdd(vars.length > 0 ? vars[0] : null);
+                          return;
+                      }
                       if (vars.length === 0) onAddItem({ item, variant: null });
                       else if (vars.length === 1) onAddItem({ item, variant: vars[0] });
                       else openVariantPicker(item, vars, onAddItem);
@@ -229,10 +233,16 @@ export function openItemModal(item, variant, initialQty = 1, initialNotes = '', 
   // Header
   card.appendChild(el('div', { class: 'p-4 border-b border-slate-100' }, [
     el('h3', { class: 'font-bold text-lg text-slate-800' }, `${item.name} ${variant ? '(' + variant.name + ')' : ''}`),
-    el('div', { class: 'text-slate-500 font-medium' }, `₹ ${Number(price).toFixed(2)}`)
+    el('div', { class: 'text-slate-500 font-medium' }, item.is_as_per_size ? 'Rate: As per size' : `₹ ${Number(price).toFixed(2)}`)
   ]));
 
   // Body
+  
+  let rateIn = null;
+  if (item.is_as_per_size) {
+      rateIn = el('input', { type: 'number', step: '1', placeholder: 'Rate (as per size)', class: 'w-full mt-2 p-2 border border-slate-200 rounded-lg text-sm font-bold text-indigo-600 focus:outline-none focus:border-indigo-400', value: '' });
+      card.appendChild(el('div', { class: 'px-4 pt-4 pb-0' }, [ rateIn ]));
+  }
   const notesIn = el('input', { type: 'text', placeholder: 'Cooking instructions (optional)', class: 'w-full mt-4 p-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-400', value: initialNotes });
   const qtyDisplay = el('div', { class: 'text-xl font-bold w-12 text-center' }, '1');
   
@@ -259,7 +269,7 @@ export function openItemModal(item, variant, initialQty = 1, initialNotes = '', 
       class: 'py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm',
       onclick: () => {
         if (typeof onSave === 'function') {
-            onSave({ item, variant, qty, notes: notesIn.value.trim() });
+            onSave({ item, variant, qty, notes: notesIn.value.trim(), custom_price: item.is_as_per_size ? Number(rateIn.value) : null });
         }
         overlay.remove();
       }
