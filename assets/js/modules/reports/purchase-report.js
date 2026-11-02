@@ -116,23 +116,68 @@ export async function renderPurchaseReport() {
       tbody.appendChild(tr);
     });
 
-    // 4. Handle Verify Button Click
-    listCard.querySelectorAll('.verify-btn').forEach(btn => {
-        btn.onclick = async (e) => {
-            const id = e.target.getAttribute('data-id');
-            e.target.disabled = true; e.target.textContent = '...';
-            try {
-                await supabase.from('purchase_reports').update({
-                    is_verified: true,
-                    verified_by_name: userName,
-                    verified_at: new Date().toISOString()
-                }).eq('id', id);
-                toast('Verified successfully', 'success');
-                renderPurchaseReport().then(newWrap => wrap.replaceWith(newWrap));
-            } catch (err) {
-                toast('Verification failed: ' + err.message, 'error');
-                e.target.disabled = false; e.target.textContent = 'Verify ✓';
-            }
+    // 4. Handle Action Buttons (Verify / Reject) with Password Prompt
+    listCard.querySelectorAll('.action-btn').forEach(btn => {
+        btn.onclick = (e) => {
+            const id = btn.getAttribute('data-id');
+            const action = btn.getAttribute('data-action');
+            const actionLabel = action === 'verified' ? 'Verify' : 'Reject';
+            
+            // Create Modal
+            const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+            const card = el('div', { class: 'bg-white rounded-xl shadow-xl w-full max-w-sm p-5' });
+            
+            const title = el('h3', { class: 'font-bold text-slate-800 mb-2' }, `Confirm ${actionLabel}`);
+            const desc = el('p', { class: 'text-xs text-slate-500 mb-4' }, 'Please enter your password to authorize this action.');
+            const pwdIn = el('input', { type: 'password', placeholder: 'Password', class: 'w-full p-2 border border-slate-300 rounded-lg text-sm mb-4 focus:ring-2 focus:ring-indigo-500 focus:outline-none' });
+            
+            const errMsg = el('div', { class: 'text-xs text-red-500 mb-2 hidden' });
+            
+            const actions = el('div', { class: 'flex gap-2' }, [
+                el('button', { class: 'flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-sm transition', onclick: () => overlay.remove() }, 'Cancel'),
+                el('button', { 
+                    class: `flex-1 py-2 ${action === 'verified' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'} text-white font-semibold rounded-lg text-sm transition`,
+                    onclick: async () => {
+                        if (!pwdIn.value) return;
+                        const submitBtn = actions.lastChild;
+                        submitBtn.disabled = true;
+                        submitBtn.textContent = 'Checking...';
+                        
+                        try {
+                            // Verify Password
+                            const { error: authErr } = await supabase.auth.signInWithPassword({
+                                email: store.state.session.user.email,
+                                password: pwdIn.value
+                            });
+                            
+                            if (authErr) throw new Error('Incorrect password');
+                            
+                            // Update Database
+                            await supabase.from('purchase_reports').update({
+                                status: action,
+                                is_verified: action === 'verified',
+                                verified_by_name: userName,
+                                verified_at: new Date().toISOString()
+                            }).eq('id', id);
+                            
+                            toast(`Bill ${actionLabel.toLowerCase()}d successfully`, 'success');
+                            overlay.remove();
+                            renderPurchaseReport().then(newWrap => wrap.replaceWith(newWrap));
+                            
+                        } catch (err) {
+                            errMsg.textContent = err.message;
+                            errMsg.classList.remove('hidden');
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = actionLabel;
+                        }
+                    }
+                }, actionLabel)
+            ]);
+            
+            card.append(title, desc, pwdIn, errMsg, actions);
+            overlay.appendChild(card);
+            document.body.appendChild(overlay);
+            pwdIn.focus();
         };
     });
 
