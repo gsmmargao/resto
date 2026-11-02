@@ -21,6 +21,11 @@ export async function renderReports(root) {
   const role = store.state.member?.role || '';
   const isPurchaser = role === 'purchaser';
   const isAdmin = role === 'owner' || role === 'admin' || role === 'manager';
+  
+  // Prevent purchasers from rendering hidden admin tabs
+  if (isPurchaser && state.tab !== 'purchases') {
+      state.tab = 'purchases';
+  }
 
   // 1. Header
   const header = el('div', { class: 'bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between flex-wrap gap-3' }, [
