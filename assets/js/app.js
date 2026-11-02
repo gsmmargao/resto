@@ -2,7 +2,7 @@ import { CONFIG } from '../../config.js';
 import { store } from './store.js';
 import { $, el, toast, logoutAndReload } from './utils.js';
 import { getSession, signIn, signOut, loadContext, onAuthChange } from './auth.js';
-import { initRouter, register, navigate } from './router.js';
+import { initRouter, register, navigate } from './router.js?v=a456c13683';
 
 
 
@@ -27,8 +27,8 @@ import { startMonitoring, buildConnectionBadge, openQueueModal, sync } from './m
 
 
 import { loadEntitlements, buildPlanBadge, maybeTrialBanner, isReadOnly, isTrialExpiringSoon, isTrialExpired } from './modules/entitlements.js';
-import { navigate as navTo } from './router.js';
-import { loadCatalog } from './modules/menu.js?v=89c8336c30';
+import { navigate as navTo } from './router.js?v=a456c13683';
+import { loadCatalog } from './modules/menu.js?v=013afcff1f';
 
 // Dynamic import wrapper for loadOpenShift
 async function loadOpenShiftWrapper(...args) {
@@ -180,9 +180,9 @@ function renderShell(root) {
   register('kds', (root, params) => import('./modules/kds.js').then(m => m.renderKDS(root, params)));
   register('cash', (root, params) => import('./modules/cash.js').then(m => m.renderCash(root, params)));
   register('upi-book', (root, params) => import('./modules/upi-book.js').then(m => m.renderUpiBook(root, params)));
-  register('stock', (root, params) => import('./modules/stock.js').then(m => m.renderStock(root, params)));
+  register('stock', (root, params) => import('./modules/stock/index.js?v=33440411d6').then(m => m.renderStock(root, params)));
   register('stock-balance', (root, params) => import('./modules/storekeeper.js').then(m => m.renderStoreKeeper(root, params)));
-  register('reports', (root, params) => import('./modules/reports/index.js').then(m => m.renderReports(root, params)));
+  register('reports', (root, params) => import('./modules/reports/index.js?v=c198dc6faf').then(m => m.renderReports(root, params)));
   register('tips-admin', (root, params) => import('./modules/admin/tips-admin.js').then(m => m.renderTipsAdmin(root, params)));
   register('menu-admin', (root, params) => import('./modules/admin/menu-admin.js').then(m => m.renderMenuAdmin(root, params)));
   register('staff-admin', (root, params) => import('./modules/admin/staff-admin.js').then(m => m.renderStaffAdmin(root, params)));

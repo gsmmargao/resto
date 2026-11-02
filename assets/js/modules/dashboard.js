@@ -13,8 +13,8 @@ let realtimeChannel = null;
 export async function renderDashboard(root) {
   root.innerHTML = '';
   try {
-    await loadTables();
-    await refreshOpenOrders();
+    // Fetch in parallel for superfast loading
+    await Promise.all([loadTables(), refreshOpenOrders()]);
   } catch (e) {
     console.error("Failed to load data", e);
   }

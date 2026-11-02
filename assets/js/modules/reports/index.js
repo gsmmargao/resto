@@ -3,25 +3,26 @@ import { store } from '../../store.js';
 import { el, fmtMoney, toast } from '../../utils.js';
 import { state, shiftDate, kpi, rangeStart, rangeEnd } from './helpers.js';
 
-// Import all your split tabs
-import { renderOverview } from './overview.js?v=1793478710';
-import { renderBills } from './bills.js?v=1793478575';
-import { renderCashbookDetailed } from './cashbook.js?v=5ef7811956';
-import { renderUPI } from './upi.js?v=1793478710';
-import { renderVoidedItems } from './voided.js?v=1793478710';
-import { renderKOTs } from './kots.js?v=1793478710';
-import { renderProfitBook } from './profitbook.js?v=5ef7811956';
-import { renderExpenses } from './expenses.js?v=5ef7811956';
-
-// Hoisted fallback for Cash Variance tab
-function renderCashVariance(root) { return renderCashbookDetailed(root); }
-
-
+// Import all tabs
+import { renderOverview } from './overview.js';
+import { renderBills } from './bills.js';
+import { renderCashbookDetailed } from './cashbook.js';
+import { renderUPI } from './upi.js';
+import { renderVoidedItems } from './voided.js';
+import { renderKOTs } from './kots.js';
+import { renderProfitBook } from './profitbook.js';
+import { renderExpenses } from './expenses.js';
+import { renderPurchaseReport } from './purchase-report.js';
 
 export async function renderReports(root) {
   root.innerHTML = '';
   const wrap = el('div', { class: 'h-full flex flex-col bg-slate-100' });
 
+  const role = store.state.member?.role || '';
+  const isPurchaser = role === 'purchaser';
+  const isAdmin = role === 'owner' || role === 'admin' || role === 'manager';
+
+  // 1. Header
   const header = el('div', { class: 'bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between flex-wrap gap-3' }, [
     el('div', {}, [
       el('h1', { class: 'text-lg font-bold text-slate-800' }, 'Reports'),
@@ -37,7 +38,6 @@ export async function renderReports(root) {
                 renderReports(root);
             }
         }, '‹'),
-        
         el('input', {
           type: 'date', value: state.startDate,
           class: 'px-2 py-1 rounded-md border-0 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium shadow-sm',
@@ -57,7 +57,6 @@ export async function renderReports(root) {
               renderReports(root); 
           }
         }),
-        
         el('button', {
             class: 'px-2 py-1.5 rounded hover:bg-slate-200 text-slate-600 transition font-bold',
             onclick: () => {
@@ -65,91 +64,171 @@ export async function renderReports(root) {
                 state.endDate = shiftDate(state.endDate, 1);
                 renderReports(root);
             }
-        }, '›'),
-
-        el('button', {
-            class: 'ml-1 px-3 py-1.5 rounded bg-white text-indigo-600 text-xs font-bold shadow-sm border border-slate-200 hover:bg-indigo-50 transition',
-            onclick: () => {
-                const d = new Date();
-                const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                state.startDate = today;
-                state.endDate = today;
-                renderReports(root);
-            }
-        }, 'Today')
+        }, '›')
       ]),
+      el('button', {
+          class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-sm transition',
+          onclick: () => {
+              const d = new Date();
+              const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              state.startDate = today;
+              state.endDate = today;
+              renderReports(root);
+          }
+      }, 'Today'),
+      el('button', {
+          class: 'px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold shadow-sm transition',
+          onclick: () => {
+              state.startDate = '2000-01-01';
+              state.endDate = '2099-12-31';
+              renderReports(root);
+          }
+      }, 'All Time'),
       el('button', {
           class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold shadow-sm transition',
           onclick: () => window.print()
       }, 'Print / PDF')
     ]),
   ]);
+  wrap.appendChild(header);
+
+  // 2. Tabs
+  const tabsList = [
+    (isAdmin || isPurchaser) ? ['purchases', 'Purchase Report'] : null,
+    !isPurchaser ? ['overview', 'Overview'] : null,
+    !isPurchaser ? ['sales', 'Sales Trend'] : null,
+    !isPurchaser ? ['items', 'Item Mix'] : null,
+    !isPurchaser ? ['staff', 'Staff'] : null,
+    !isPurchaser ? ['upi', 'UPI'] : null,
+    !isPurchaser ? ['cash', 'Cashbook'] : null,
+    !isPurchaser ? ['voided', 'Voided Items'] : null,
+    !isPurchaser ? ['bills', 'Bills'] : null,
+    !isPurchaser ? ['kots', 'KOTs'] : null,
+    !isPurchaser ? ['expenses', 'Expense'] : null,
+    !isPurchaser ? ['profit', 'Profit Book'] : null
+  ].filter(Boolean);
 
   const tabs = el('div', { class: 'bg-white border-b border-slate-200 px-4 flex gap-1 overflow-x-auto' },
-    [
-      ['overview', 'Overview'],
-      ['sales', 'Sales Trend'],
-      ['items', 'Item Mix'],
-      ['staff', 'Staff'],
-      ['upi', 'UPI'],
-      ['cashbook', 'Cashbook'],
-      ['voided', 'Voided Items'],
-      ['bills', 'Bills'],
-      ['kots', 'KOTs'],
-      ['expenses', 'Expense'],
-      ['profit', 'Profit Book']
-    ].map(([key, label]) =>
-        el('button', {
-          class: `px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition ${state.tab === key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-600 hover:text-slate-800'}`,
-          onclick: async () => { state.tab = key; localStorage.setItem('reports_active_tab', key); await renderReports(root); },
-        }, label)));
+    tabsList.map(([key, label]) => el('button', {
+        class: `px-4 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition ${state.tab === key ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-600 hover:text-slate-800'}`,
+        onclick: () => { state.tab = key; localStorage.setItem('reports_active_tab', key); renderReports(root); },
+    }, label))
+  );
+  wrap.appendChild(tabs);
 
-  const body = el('div', { class: 'flex-1 overflow-y-auto p-4 md:p-6' });
-  const inner = el('div', { class: 'max-w-7xl mx-auto' });
-  inner.appendChild(el('div', { class: 'text-slate-400 text-sm' }, 'Loading…'));
+  // 3. Body
+  const body = el('div', { class: 'flex-1 min-h-0 overflow-y-auto p-4' });
+  const inner = el('div', { class: 'max-w-7xl mx-auto w-full' });
   body.appendChild(inner);
+  wrap.appendChild(body);
 
-  wrap.appendChild(header); wrap.appendChild(tabs); wrap.appendChild(body);
   root.appendChild(wrap);
 
+  // 4. Render Active Panel
   try {
     const panels = { 
       overview: renderOverview, 
       sales: renderSalesTrend, 
       items: renderItemMix, 
       staff: renderStaff, 
-      cash: renderCashVariance,
+      cash: renderCashbookDetailed,
       upi: renderUPI,
       cashbook: renderCashbookDetailed,
       voided: renderVoidedItems,
       bills: renderBills,
       kots: renderKOTs,
       expenses: renderExpenses,
+      purchases: renderPurchaseReport,
       profit: renderProfitBook
     };
+    
+    // Fallback for cash variance
+    if (!panels[state.tab]) panels[state.tab] = renderCashbookDetailed; 
+
     const panel = await panels[state.tab]();
     
-    // Only clear if panel is a valid Node OR the panel didn't self-render
     if (panel && panel.nodeType === 1) {
         inner.innerHTML = '';
         inner.appendChild(panel);
-    } else {
-        // The panel might have rendered itself directly into the DOM
-        // Only show an error if the container is still empty
-        if (!inner.innerHTML.trim() || inner.innerHTML.includes('animate-pulse') || inner.innerHTML.includes('Loading')) {
-            inner.innerHTML = `<div class="bg-red-50 text-red-600 p-6 rounded-xl border border-red-200 text-center font-medium">Failed to render ${state.tab} report.</div>`;
-        }
-        // Otherwise, the tab rendered itself. Do nothing.
     }
   } catch (err) {
     console.error('[reports]', err);
-    inner.innerHTML = '';
-    inner.appendChild(el('div', { class: 'bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm' }, 'Failed to load report: ' + (err.message || err)));
+    inner.innerHTML = `<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading report: ${err.message}</div>`;
   }
 }
 
+// ==========================================
+// MISSING HELPER FUNCTIONS (RESTORED HERE)
+// ==========================================
+function itemTable(title, rows, metric) {
+  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm' }, [
+    el('div', { class: 'px-4 py-3 border-b border-slate-100 bg-slate-50' }, [
+      el('h3', { class: 'font-semibold text-slate-800 text-sm' }, title)
+    ])
+  ]);
+  const tbody = el('tbody');
+  
+  if (rows.length === 0) {
+    tbody.appendChild(el('tr', {}, [el('td', { class: 'px-4 py-4 text-sm text-slate-500 text-center', colspan: 2 }, 'No data')]));
+  } else {
+    rows.slice(0, 10).forEach(r => {
+      let value = '';
+      if (metric === 'qty') value = r.qty;
+      else if (metric === 'revenue') value = fmtMoney(r.revenue);
+      else if (metric === 'profit') value = fmtMoney(r.profit);
+      else if (metric === 'margin') value = r.marginPct.toFixed(1) + '%';
 
-async function renderSalesTrend() {
+      tbody.appendChild(el('tr', { class: 'border-b border-slate-50 last:border-0 hover:bg-slate-50' }, [
+        el('td', { class: 'px-4 py-2 text-sm text-slate-700 truncate max-w-[200px]' }, r.name),
+        el('td', { class: 'px-4 py-2 text-sm text-slate-800 font-medium text-right' }, value),
+      ]));
+    });
+  }
+  card.appendChild(el('table', { class: 'w-full' }, [tbody]));
+  return card;
+}
+
+function staffTable(title, data, memberMap) {
+  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm' }, [
+    el('div', { class: 'px-4 py-3 border-b border-slate-100 bg-slate-50' }, [
+      el('h3', { class: 'font-semibold text-slate-800 text-sm' }, title)
+    ])
+  ]);
+  const tbody = el('tbody');
+  const entries = Object.entries(data).sort((a, b) => b[1].sales - a[1].sales);
+  
+  if (entries.length === 0) {
+     tbody.appendChild(el('tr', {}, [el('td', { class: 'px-4 py-4 text-sm text-slate-500 text-center', colspan: 3 }, 'No data')]));
+  } else {
+      entries.forEach(([id, v]) => {
+        const member = memberMap.get(id);
+        const name = member ? member.display_name : 'Unknown';
+        tbody.appendChild(el('tr', { class: 'border-b border-slate-50 last:border-0 hover:bg-slate-50' }, [
+          el('td', { class: 'px-4 py-2 text-sm text-slate-700' }, name),
+          el('td', { class: 'px-4 py-2 text-sm text-slate-600 text-right' }, v.count),
+          el('td', { class: 'px-4 py-2 text-sm text-slate-800 font-medium text-right' }, fmtMoney(v.sales)),
+        ]));
+      });
+  }
+  
+  card.appendChild(el('table', { class: 'w-full' }, [
+    el('thead', { class: 'bg-white text-[10px] uppercase text-slate-400' }, [
+      el('tr', {}, [
+         el('th', { class: 'px-4 py-2 text-left' }, 'Name'),
+         el('th', { class: 'px-4 py-2 text-right' }, 'Orders'),
+         el('th', { class: 'px-4 py-2 text-right' }, 'Sales'),
+      ])
+    ]),
+    tbody
+  ]));
+  return card;
+}
+
+// ==========================================
+// REPORT TABS
+// ==========================================
+
+export async function renderSalesTrend() {
   const outletId = store.state.outlet.id;
   const from = rangeStart().toISOString();
   const to = rangeEnd().toISOString();
@@ -215,7 +294,7 @@ async function renderSalesTrend() {
   return wrap;
 }
 
-async function renderItemMix() {
+export async function renderItemMix() {
   const outletId = store.state.outlet.id;
   const from = rangeStart().toISOString();
   const to = rangeEnd().toISOString();
@@ -246,7 +325,7 @@ async function renderItemMix() {
   return wrap;
 }
 
-async function renderStaff() {
+export async function renderStaff() {
   const outletId = store.state.outlet.id;
   const from = rangeStart().toISOString();
   const to = rangeEnd().toISOString();
@@ -266,204 +345,4 @@ async function renderStaff() {
   wrap.appendChild(staffTable('Waiters', byWaiter, memberMap));
   wrap.appendChild(staffTable('Cashiers', byCashier, memberMap));
   return wrap;
-}
-
-async function renderKOTsTab(root, state) {
-  root.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading KOTs...</div>';
-  
-  const outletId = store.state.outlet?.id;
-  if (!outletId) return;
-
-  // Fetch KOTs within date range
-  let query = supabase.from('kots')
-    .select('*, orders(table_name_snapshot)')
-    .eq('outlet_id', outletId)
-    .order('created_at', { ascending: false });
-
-  if (state.fromDate) {
-    query = query.gte('created_at', new Date(state.fromDate).toISOString());
-  }
-  if (state.toDate) {
-    const to = new Date(state.toDate);
-    to.setHours(23, 59, 59, 999);
-    query = query.lte('created_at', to.toISOString());
-  }
-
-  const { data: kots, error } = await query;
-  if (error) {
-    root.innerHTML = `<div class="text-red-500 p-4">Error loading KOTs: ${error.message}</div>`;
-    return;
-  }
-
-  if (!kots || kots.length === 0) {
-    root.innerHTML = '<div class="text-center py-10 text-slate-500">No KOTs found for this period.</div>';
-    return;
-  }
-
-  // Build Table
-  const table = el('table', { class: 'w-full text-sm text-left text-slate-600' });
-  table.innerHTML = `
-    <thead class="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
-      <tr>
-        <th class="px-4 py-3">Time</th>
-        <th class="px-4 py-3">KOT #</th>
-        <th class="px-4 py-3">Table</th>
-        <th class="px-4 py-3">Status</th>
-        <th class="px-4 py-3 text-right">Action</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  `;
-
-  const tbody = table.querySelector('tbody');
-
-  kots.forEach(k => {
-    const tr = el('tr', { class: 'border-b border-slate-100 hover:bg-slate-50' });
-    
-    const timeStr = new Date(k.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const dateStr = new Date(k.created_at).toLocaleDateString('en-GB');
-    
-    const tableNameRaw = k.orders?.table_name_snapshot || 'Take-away';
-    const tableName = tableNameRaw.split(' - ')[0];
-
-    tr.innerHTML = `
-      <td class="px-4 py-3">
-        <div class="font-medium">${dateStr}</div>
-        <div class="text-xs text-slate-400">${timeStr}</div>
-      </td>
-      <td class="px-4 py-3 font-semibold text-slate-800">KOT-${k.kot_number}</td>
-      <td class="px-4 py-3 font-medium">${tableName}</td>
-      <td class="px-4 py-3">
-        <span class="px-2 py-1 rounded text-xs font-semibold bg-${k.status === 'ready' ? 'emerald' : 'amber'}-100 text-${k.status === 'ready' ? 'emerald' : 'amber'}-700">
-          ${k.status.toUpperCase()}
-        </span>
-      </td>
-      <td class="px-4 py-3 text-right">
-        <button class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-xs font-semibold border border-blue-200 transition">
-          🖨️ Print
-        </button>
-      </td>
-    `;
-
-    tr.querySelector('button').onclick = async (e) => {
-      const btn = e.currentTarget;
-      const orig = btn.innerHTML;
-      btn.innerHTML = 'Printing...';
-      btn.disabled = true;
-
-      try {
-        // Fetch KOT items
-        const { data: items } = await supabase.from('kot_items').select('*').eq('kot_id', k.id);
-        
-        const payload = {
-          kot: k.kot_number,
-          items: (items || []).map(it => ({ 
-              quantity: it.quantity, 
-              name: it.name_snapshot, 
-              variant: it.variant_name, 
-              notes: it.notes 
-          })),
-          tableName: tableName,
-          waiterName: k.created_by_name || 'admin'
-        };
-        
-        await fetch('https://192.168.100.19:3000/api/print-kot', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        
-        if (window.toast) window.toast('KOT printed successfully', 'success');
-      } catch (err) {
-        console.error(err);
-        if (window.toast) window.toast('Failed to print KOT', 'error');
-      }
-
-      btn.innerHTML = orig;
-      btn.disabled = false;
-    };
-
-    tbody.appendChild(tr);
-  });
-
-  root.innerHTML = '';
-  const wrapper = el('div', { class: 'bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden' }, [
-    el('div', { class: 'px-4 py-3 border-b border-slate-200 bg-slate-50 font-semibold text-slate-700 flex justify-between items-center' }, [
-      el('span', {}, 'Recent KOTs'),
-      el('span', { class: 'text-xs font-normal text-slate-500' }, `${kots.length} KOTs`)
-    ])
-  ]);
-  wrapper.appendChild(table);
-  root.appendChild(wrapper);
-}
-
-
-
-function itemTable(title, rows, mode, limit = 10) {
-  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
-  card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50' }, [
-    el('h3', { class: 'font-semibold text-slate-800 text-sm' }, title),
-  ]));
-  const slice = rows.slice(0, limit);
-  if (!slice.length) {
-    card.appendChild(el('div', { class: 'p-5 text-center text-slate-400 text-sm' }, 'No data for this range'));
-    return card;
-  }
-  const tbody = el('tbody');
-  slice.forEach((r, i) => {
-    let value, cls;
-    if (mode === 'qty') { value = r.qty; cls = 'text-slate-700'; }
-    else if (mode === 'revenue') { value = fmtMoney(r.revenue); cls = 'text-indigo-600'; }
-    else if (mode === 'profit') { value = fmtMoney(r.profit); cls = 'text-emerald-600'; }
-    else { value = r.marginPct.toFixed(1) + '%'; cls = r.marginPct < 20 ? 'text-red-600' : r.marginPct < 40 ? 'text-amber-600' : 'text-emerald-600'; }
-    tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
-      el('td', { class: 'px-5 py-2 text-xs text-slate-400 w-8' }, String(i + 1)),
-      el('td', { class: 'px-5 py-2 text-sm text-slate-800 truncate max-w-[200px]' }, r.name),
-      el('td', { class: `px-5 py-2 text-sm font-semibold text-right ${cls}` }, String(value)),
-    ]));
-  });
-  card.appendChild(el('table', { class: 'w-full' }, [tbody]));
-  return card;
-}
-
-function staffTable(title, data, memberMap) {
-  const card = el('div', { class: 'bg-white rounded-xl border border-slate-200 overflow-hidden' });
-  card.appendChild(el('div', { class: 'px-5 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between' }, [
-    el('h3', { class: 'font-semibold text-slate-800 text-sm' }, title),
-    el('span', { class: 'text-xs text-slate-500' }, `${Object.keys(data).length} staff`),
-  ]));
-  const entries = Object.entries(data).sort((a, b) => b[1].sales - a[1].sales);
-  if (!entries.length) {
-    card.appendChild(el('div', { class: 'p-5 text-center text-slate-400 text-sm' }, 'No data'));
-    return card;
-  }
-  const maxSales = Math.max(...entries.map(([, v]) => v.sales), 1);
-  const tbody = el('tbody');
-  entries.forEach(([id, v]) => {
-    const m = memberMap.get(id);
-    const name = m?.display_name || m?.role || 'Unknown';
-    const pct = (v.sales / maxSales) * 100;
-    tbody.appendChild(el('tr', { class: 'border-t border-slate-100' }, [
-      el('td', { class: 'px-5 py-2.5' }, [
-        el('div', { class: 'flex items-center gap-3' }, [
-          el('div', { class: 'w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 text-white text-xs font-bold flex items-center justify-center' }, name.charAt(0).toUpperCase()),
-          el('div', { class: 'flex-1 min-w-0' }, [
-            el('div', { class: 'text-sm font-medium text-slate-800 truncate' }, name),
-            el('div', { class: 'text-[10px] uppercase text-slate-400' }, m?.role || '—'),
-          ]),
-        ]),
-      ]),
-      el('td', { class: 'px-5 py-2.5 text-right text-sm text-slate-600 w-16' }, String(v.count)),
-      el('td', { class: 'px-5 py-2.5 text-right w-40' }, [
-        el('div', { class: 'flex flex-col items-end gap-1' }, [
-          el('div', { class: 'text-sm font-semibold text-slate-800' }, fmtMoney(v.sales)),
-          el('div', { class: 'w-full bg-slate-100 rounded-full h-1.5 overflow-hidden' }, [
-            el('div', { class: 'bg-indigo-500 h-full rounded-full', style: `width: ${pct}%` }),
-          ]),
-        ]),
-      ]),
-    ]));
-  });
-  card.appendChild(el('table', { class: 'w-full' }, [tbody]));
-  return card;
 }

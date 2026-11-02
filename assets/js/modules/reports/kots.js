@@ -14,20 +14,16 @@ export async function renderKOTs() {
   }
 
   try {
-    const fromDate = (window.state && window.state.startDate) || new Date().toISOString().split('T')[0];
-    const toDate = (window.state && window.state.endDate) || new Date().toISOString().split('T')[0];
+    // Use the global rangeStart/rangeEnd helpers to respect the top date filter
+    const from = rangeStart().toISOString();
+    const to = rangeEnd().toISOString();
 
     let query = supabase.from('kots')
       .select('*, orders(table_name_snapshot)')
       .eq('outlet_id', outletId)
+      .gte('created_at', from)
+      .lte('created_at', to)
       .order('created_at', { ascending: false });
-
-    if (fromDate) query = query.gte('created_at', new Date(fromDate).toISOString());
-    if (toDate) {
-      const to = new Date(toDate);
-      to.setHours(23, 59, 59, 999);
-      query = query.lte('created_at', to.toISOString());
-    }
 
     const { data: kots, error } = await query;
     if (error) throw error;

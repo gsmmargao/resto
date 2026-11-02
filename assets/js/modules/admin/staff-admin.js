@@ -19,7 +19,8 @@ const ROLES = [
   { id: 'cashier',     label: 'Cashier',      color: 'bg-emerald-100 text-emerald-700', desc: 'POS, billing, shift management' },
   { id: 'waiter',      label: 'Waiter',       color: 'bg-sky-100 text-sky-700',       desc: 'Table orders, KOT firing (no billing)' },
   { id: 'chef',        label: 'Chef',         color: 'bg-orange-100 text-orange-700', desc: 'Kitchen display, KOT status' },
-  { id: 'store_keeper',label: 'Store Keeper', color: 'bg-indigo-100 text-indigo-700', desc: 'Inventory, physical stock counts' },
+  { id: 'store_keeper',label: 'Store Keeper', color: 'bg-indigo-100 text-indigo-700', desc: 'Inventory, physical stock counts' },,
+  { id: 'purchaser', label: 'Purchaser' }
 ];
 
 const roleMeta = (id) => ROLES.find(r => r.id === id) || { label: id, color: 'bg-slate-100 text-slate-600', desc: '' };

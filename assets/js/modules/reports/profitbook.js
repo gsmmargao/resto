@@ -29,7 +29,7 @@ export async function renderProfitBook() {
 
     if (error) throw error;
 
-    const validPays = (payData || []).filter(p => p.mode !== 'credit');
+    const validPays = (payData || []).filter(p => p.mode !== 'credit' && p.mode !== 'no_charge');
     const totalRevenue = validPays.reduce((sum, p) => sum + Number(p.amount || 0), 0);
     const totalTips = validPays.reduce((sum, p) => sum + Number(p.tip_amount || 0), 0);
     const totalExpenses = (expData || []).reduce((sum, e) => sum + Number(e.amount || 0), 0);
@@ -39,6 +39,9 @@ export async function renderProfitBook() {
                          + (quickData || []).reduce((s, p) => s + Number(p.total || 0), 0);
     const totalSupplierPayments = (supPayData || []).reduce((s, p) => s + Number(p.amount || 0), 0);
     const supplierOutstanding = Math.max(0, totalPurchases - totalSupplierPayments);
+    
+    // Calculate the final Net Profit
+    const netProfit = totalRevenue + totalTips - totalExpenses - supplierOutstanding;
 
     // Group payments by invoice for the table
     const invoiceMap = {};
@@ -79,7 +82,7 @@ export async function renderProfitBook() {
           </div>
           <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm text-white">
             <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Net Profit</div>
-            <div class="text-3xl font-bold text-emerald-400 mt-1">₹${(totalRevenue + totalTips - totalExpenses - supplierOutstanding).toFixed(2)}</div>
+            <div class="text-3xl font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-red-400'} mt-1">₹${netProfit.toFixed(2)}</div>
           </div>
         </div>
 

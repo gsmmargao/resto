@@ -6,43 +6,51 @@ import { state, rangeStart, rangeEnd } from './helpers.js';
 export async function renderCashbookDetailed() {
   const wrapper = el('div', { class: 'w-full space-y-6' });
   const outletId = store.state.outlet.id;
-  const fromDate = state.startDate;
-  const toDate = state.endDate;
 
   try {
-    const { data: payments } = await supabase.from('payments')
-      .select('amount, tip_amount, mode, paid_at, reference_no')
-      .eq('outlet_id', outletId)
-      .gte('paid_at', rangeStart().toISOString())
-      .lte('paid_at', rangeEnd().toISOString())
-      .eq('status', 'success')
-      .in('mode', ['cash', 'upi', 'card']);
+    // 1. Fetch ALL Data (No date filters in DB query)
+    const [payRes, expRes, cashRes] = await Promise.all([
+      supabase.from('payments')
+        .select('amount, tip_amount, mode, paid_at, reference_no')
+        .eq('outlet_id', outletId)
+        .eq('status', 'success')
+        .in('mode', ['cash', 'upi', 'card']),
+      supabase.from('expenses')
+        .select('*')
+        .eq('outlet_id', outletId),
+      supabase.from('cash_movements')
+        .select('person_name, movement_type, amount, created_at, reason')
+        .eq('outlet_id', outletId)
+        .not('person_name', 'is', null)
+    ]);
 
-    const { data: expenses } = await supabase.from('expenses')
-      .select('*')
-      .eq('outlet_id', outletId)
-      .gte('created_at', rangeStart().toISOString())
-      .lte('created_at', rangeEnd().toISOString());
+    if (payRes.error) throw payRes.error;
+    if (expRes.error) throw expRes.error;
+    if (cashRes.error) throw cashRes.error;
 
-    const { data: cashMovements } = await supabase.from('cash_movements')
-      .select('person_name, movement_type, amount, created_at, reason')
-      .eq('outlet_id', outletId)
-      .gte('created_at', rangeStart().toISOString())
-      .lte('created_at', rangeEnd().toISOString())
-      .not('person_name', 'is', null);
+    const payments = payRes.data || [];
+    const expenses = expRes.data || [];
+    const cashMovements = cashRes.data || [];
+
+    const rStart = rangeStart().getTime();
+    const rEnd = rangeEnd().getTime();
 
     let cashIn = 0, upiIn = 0, cashOut = 0, upiOut = 0;
     const ledger = [];
     const personMap = new Map();
 
-    (payments || []).forEach(p => {
+    // 2. Process Payments (All-Time for Summary, Date-Filtered for Ledger)
+    payments.forEach(p => {
       const amt = Number(p.amount || 0);
       const tip = Number(p.tip_amount || 0);
       
+      // Summary Totals (All Time)
       if (p.mode === 'cash') cashIn += (amt + tip);
       if (p.mode === 'upi' || p.mode === 'card') upiIn += (amt + tip);
       
-      if (amt > 0) {
+      // Ledger List (Date Filtered)
+      const pTime = new Date(p.paid_at).getTime();
+      if (amt > 0 && pTime >= rStart && pTime <= rEnd) {
         const isDues = p.reference_no && (p.reference_no.toLowerCase().includes('settle') || p.reference_no.toLowerCase().includes('credit'));
         ledger.push({ 
             time: p.paid_at, 
@@ -55,21 +63,30 @@ export async function renderCashbookDetailed() {
       }
     });
 
-    (expenses || []).forEach(e => {
+    // 3. Process Expenses (All-Time for Summary, Date-Filtered for Ledger)
+    expenses.forEach(e => {
         const amt = Number(e.amount);
+        
+        // Summary Totals (All Time)
         if (e.payment_mode === 'cash') cashOut += amt;
         if (e.payment_mode === 'upi' || e.payment_mode === 'card') upiOut += amt;
-        ledger.push({
-            time: e.created_at,
-            type: 'Expense',
-            desc: `${e.category} ${e.staff_name ? '(' + e.staff_name + ')' : ''} ${e.custom_category ? '- ' + e.custom_category : ''}`,
-            mode: e.payment_mode.toUpperCase(),
-            in: 0,
-            out: amt
-        });
+        
+        // Ledger List (Date Filtered)
+        const eTime = new Date(e.created_at).getTime();
+        if (eTime >= rStart && eTime <= rEnd) {
+            ledger.push({
+                time: e.created_at,
+                type: 'Expense',
+                desc: `${e.category} ${e.staff_name ? '(' + e.staff_name + ')' : ''} ${e.custom_category ? '- ' + e.custom_category : ''}`,
+                mode: e.payment_mode.toUpperCase(),
+                in: 0,
+                out: amt
+            });
+        }
     });
 
-    (cashMovements || []).forEach(m => {
+    // 4. Process Cash Movements (All-Time for Person Ledger)
+    cashMovements.forEach(m => {
         if (!m.person_name) return;
         const name = m.person_name.trim();
         if (!personMap.has(name)) personMap.set(name, 0);
@@ -80,48 +97,112 @@ export async function renderCashbookDetailed() {
             personMap.set(name, personMap.get(name) - Number(m.amount));
         }
     });
+    
     const personLedger = Array.from(personMap.entries())
         .filter(([name, balance]) => balance !== 0)
         .sort((a,b) => b[1] - a[1]);
 
     ledger.sort((a,b) => new Date(b.time) - new Date(a.time));
 
-    // --- LEDGER & PAGINATION SETUP ---
+    // --- RENDER UI ---
+    wrapper.innerHTML = `
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="px-5 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+            <h3 class="font-bold text-slate-800 text-sm">Cash & UPI / Card Ledger</h3>
+            <span class="text-xs font-semibold text-slate-500">${ledger.length} entries</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
+              <tr>
+                <th class="px-4 py-3">When</th>
+                <th class="px-4 py-3">Type</th>
+                <th class="px-4 py-3">Reference</th>
+                <th class="px-4 py-3 text-center">Mode</th>
+                <th class="px-4 py-3 text-right">In (₹)</th>
+                <th class="px-4 py-3 text-right">Out (₹)</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-tbody"></tbody>
+          </table>
+        </div>
+        <div class="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-between items-center" id="pagination-controls"></div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+        <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+          <h3 class="font-bold text-slate-800 text-sm">Summary by payment mode (All-Time)</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
+              <tr>
+                <th class="px-4 py-3">Mode</th>
+                <th class="px-4 py-3 text-right">Total In</th>
+                <th class="px-4 py-3 text-right">Total Out</th>
+                <th class="px-4 py-3 text-right">Net Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b border-slate-50">
+                <td class="px-4 py-3 font-bold text-slate-700">Cash</td>
+                <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${cashIn.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right text-red-600 font-medium">₹${cashOut.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(cashIn - cashOut).toFixed(2)}</td>
+              </tr>
+              <tr class="border-b border-slate-50">
+                <td class="px-4 py-3 font-bold text-slate-700">UPI / Card</td>
+                <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${upiIn.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right text-red-600 font-medium">₹${upiOut.toFixed(2)}</td>
+                <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(upiIn - upiOut).toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      ${personLedger.length > 0 ? `
+      <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
+          <h3 class="font-bold text-slate-800 text-sm">Cash Held by Person (All-Time)</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
+              <tr>
+                <th class="px-4 py-3">Person Name</th>
+                <th class="px-4 py-3 text-right">Amount Held</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${personLedger.map(([name, balance]) => `
+                <tr class="border-b border-slate-50 hover:bg-slate-50 cursor-pointer" onclick="window.openPersonLedger('${name}', ${JSON.stringify(personLedger)}, ${JSON.stringify(cashMovements)})">
+                  <td class="px-4 py-3 font-bold text-indigo-600 underline">${name}</td>
+                  <td class="px-4 py-3 text-right font-bold text-indigo-600">₹${balance.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      ` : ''}
+    `;
+
+    // --- PAGINATION LOGIC ---
     let currentPage = 1;
     const pageSize = 10;
     const totalPages = Math.max(1, Math.ceil(ledger.length / pageSize));
-
-    const ledgerCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6' });
-    ledgerCard.innerHTML = `
-      <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
-        <h3 class="font-bold text-slate-800 text-sm">Cash & UPI / Card Ledger</h3>
-      </div>
-      <table class="w-full">
-        <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
-          <tr>
-            <th class="px-4 py-3 text-left">When</th>
-            <th class="px-4 py-3 text-left">Type</th>
-            <th class="px-4 py-3 text-left">Reference</th>
-            <th class="px-4 py-3 text-center">Mode</th>
-            <th class="px-4 py-3 text-right">In (₹)</th>
-            <th class="px-4 py-3 text-right">Out (₹)</th>
-          </tr>
-        </thead>
-        <tbody id="ledger-tbody"></tbody>
-      </table>
-      <div class="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-between items-center" id="pagination-controls"></div>
-    `;
-
-    const tbody = ledgerCard.querySelector('#ledger-tbody');
-    const paginationControls = ledgerCard.querySelector('#pagination-controls');
 
     const updateTable = (page) => {
         currentPage = page;
         const start = (currentPage - 1) * pageSize;
         const paginated = ledger.slice(start, start + pageSize);
 
+        const tbody = document.getElementById('ledger-tbody');
+        if (!tbody) return;
+
         tbody.innerHTML = paginated.length === 0 
-            ? '<tr><td colspan="6" class="text-center py-6 text-slate-400 text-sm">No transactions</td></tr>' 
+            ? '<tr><td colspan="6" class="text-center py-6 text-slate-400 text-sm">No transactions in this period</td></tr>' 
             : paginated.map(l => `
                 <tr class="border-b border-slate-50 hover:bg-slate-50">
                   <td class="px-4 py-3 text-xs text-slate-500">${new Date(l.time).toLocaleString('en-GB')}</td>
@@ -136,97 +217,70 @@ export async function renderCashbookDetailed() {
         const prevDisabled = currentPage === 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer';
         const nextDisabled = currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer';
 
-        paginationControls.innerHTML = `
-            <span class="text-xs text-slate-500">Showing ${ledger.length === 0 ? 0 : start + 1} to ${Math.min(start + pageSize, ledger.length)} of ${ledger.length} entries</span>
-            <div class="flex items-center gap-2">
-                <button id="btn-prev" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 ${prevDisabled} transition">Prev</button>
-                <span class="text-xs font-bold text-slate-700">Page ${currentPage} of ${totalPages}</span>
-                <button id="btn-next" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 ${nextDisabled} transition">Next</button>
-            </div>
-        `;
+        const paginationControls = document.getElementById('pagination-controls');
+        if (paginationControls) {
+            paginationControls.innerHTML = `
+                <span class="text-xs text-slate-500">Showing ${ledger.length === 0 ? 0 : start + 1} to ${Math.min(start + pageSize, ledger.length)} of ${ledger.length} entries</span>
+                <div class="flex items-center gap-2">
+                    <button id="btn-prev" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 ${prevDisabled} transition">Prev</button>
+                    <span class="text-xs font-bold text-slate-700">Page ${currentPage} of ${totalPages}</span>
+                    <button id="btn-next" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 ${nextDisabled} transition">Next</button>
+                </div>
+            `;
 
-        if (currentPage > 1) {
-            paginationControls.querySelector('#btn-prev').onclick = () => updateTable(currentPage - 1);
-        }
-        if (currentPage < totalPages) {
-            paginationControls.querySelector('#btn-next').onclick = () => updateTable(currentPage + 1);
+            if (currentPage > 1) {
+                paginationControls.querySelector('#btn-prev').onclick = () => updateTable(currentPage - 1);
+            }
+            if (currentPage < totalPages) {
+                paginationControls.querySelector('#btn-next').onclick = () => updateTable(currentPage + 1);
+            }
         }
     };
 
-    updateTable(1); // Initialize first page
+    updateTable(1);
 
-    wrapper.appendChild(ledgerCard);
+    // Global function for opening the person ledger
+    window.openPersonLedger = (personName, personLedger, cashMovements) => {
+        const movements = cashMovements.filter(m => m.person_name === personName);
+        const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+        const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col' });
+        
+        const totalHeld = personLedger.find(p => p[0] === personName)?.[1] || 0;
 
-    // --- SUMMARY SECTION ---
-    const summaryCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden' });
-    summaryCard.innerHTML = `
-      <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
-        <h3 class="font-bold text-slate-800 text-sm">Summary by payment mode</h3>
-      </div>
-      <table class="w-full">
-        <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
-          <tr>
-            <th class="px-4 py-3 text-left">Mode</th>
-            <th class="px-4 py-3 text-right">Total In</th>
-            <th class="px-4 py-3 text-right">Total Out</th>
-            <th class="px-4 py-3 text-right">Net Balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr class="border-b border-slate-50">
-            <td class="px-4 py-3 font-bold text-slate-700">Cash</td>
-            <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${cashIn.toFixed(2)}</td>
-            <td class="px-4 py-3 text-right text-red-600 font-medium">₹${cashOut.toFixed(2)}</td>
-            <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(cashIn - cashOut).toFixed(2)}</td>
-          </tr>
-          <tr class="border-b border-slate-50">
-            <td class="px-4 py-3 font-bold text-slate-700">UPI / Card</td>
-            <td class="px-4 py-3 text-right text-emerald-600 font-medium">₹${upiIn.toFixed(2)}</td>
-            <td class="px-4 py-3 text-right text-red-600 font-medium">₹${upiOut.toFixed(2)}</td>
-            <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(upiIn - upiOut).toFixed(2)}</td>
-          </tr>
-        </tbody>
-      </table>
-    `;
+        card.appendChild(el('div', { class: 'flex justify-between items-center border-b pb-3 shrink-0' }, [
+            el('div', {}, [
+                el('h3', { class: 'font-bold text-lg text-slate-800' }, `${personName}'s Cash Ledger`),
+                el('div', { class: 'text-sm text-slate-500 mt-1' }, 'Total Cash Held: ', el('span', { class: 'font-bold text-indigo-600' }, fmtMoney(totalHeld)))
+            ]),
+            el('button', { class: 'text-slate-400 hover:text-slate-800 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
+        ]));
 
-    wrapper.appendChild(summaryCard);
-
-    // --- PERSON LEDGER SECTION ---
-    if (personLedger.length > 0) {
-        const personCard = el('div', { class: 'bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-6' });
-        personCard.innerHTML = `
-          <div class="px-5 py-4 bg-slate-50 border-b border-slate-200">
-            <h3 class="font-bold text-slate-800 text-sm">Cash Held by Person (Drawer Withdrawals)</h3>
-          </div>
-          <table class="w-full">
-            <thead class="bg-white text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-100">
-              <tr>
-                <th class="px-4 py-3 text-left">Person Name</th>
-                <th class="px-4 py-3 text-right">Amount Held</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${personLedger.map(([name, balance]) => `
-                <tr class="border-b border-slate-50 hover:bg-slate-50">
-                  <td class="px-4 py-3 font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer person-ledger-link" data-name="${name}">${name}</td>
-                  <td class="px-4 py-3 text-right font-bold text-indigo-600">₹${balance.toFixed(2)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `;
-        wrapper.appendChild(personCard);
-
-        // Attach click events to open the ledger
-        personCard.querySelectorAll('.person-ledger-link').forEach(link => {
-            link.onclick = () => {
-                const personName = link.getAttribute('data-name');
-                // Filter movements for this person
-                const personMovements = (cashMovements || []).filter(m => m.person_name === personName);
-                openPersonLedgerModal(personName, personMovements);
-            };
-        });
-    }
+        const tableWrap = el('div', { class: 'overflow-y-auto flex-1' });
+        const table = el('table', { class: 'w-full text-left' }, [
+            el('thead', { class: 'bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0' }, [
+                el('tr', {}, [
+                    el('th', { class: 'p-3' }, 'Date & Time'),
+                    el('th', { class: 'p-3' }, 'Type'),
+                    el('th', { class: 'p-3' }, 'Reason'),
+                    el('th', { class: 'p-3 text-right' }, 'Amount')
+                ])
+            ]),
+            el('tbody', {}, movements.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).map(m => {
+                const isOut = m.movement_type === 'cash_out';
+                return el('tr', { class: 'border-b border-slate-100 text-sm hover:bg-slate-50' }, [
+                    el('td', { class: 'p-3 text-slate-600 whitespace-nowrap' }, new Date(m.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })),
+                    el('td', { class: `p-3 font-semibold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, isOut ? 'Cash Taken' : 'Cash Returned'),
+                    el('td', { class: 'p-3 text-slate-500' }, m.reason || '—'),
+                    el('td', { class: `p-3 text-right font-bold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, `${isOut ? '-' : '+'}₹${Number(m.amount).toFixed(2)}`)
+                ]);
+            }))
+        ]);
+        tableWrap.appendChild(table);
+        card.appendChild(tableWrap);
+        card.appendChild(el('button', { class: 'w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium mt-2 shrink-0', onclick: () => overlay.remove() }, 'Close'));
+        overlay.appendChild(card);
+        document.body.appendChild(overlay);
+    };
 
   } catch (err) {
     console.error(err);
@@ -234,60 +288,4 @@ export async function renderCashbookDetailed() {
   }
 
   return wrapper;
-}
-
-
-function openPersonLedgerModal(personName, movements) {
-  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col' });
-
-  // Calculate total balance
-  let totalHeld = 0;
-  const sortedMovements = [...movements].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-
-  sortedMovements.forEach(m => {
-      if (m.movement_type === 'cash_out') totalHeld += Number(m.amount);
-      if (m.movement_type === 'cash_in') totalHeld -= Number(m.amount);
-  });
-
-  const header = el('div', { class: 'flex justify-between items-center border-b pb-3 shrink-0' }, [
-      el('div', {}, [
-          el('h3', { class: 'font-bold text-lg text-slate-800' }, `${personName}'s Cash Ledger`),
-          el('div', { class: 'text-sm text-slate-500 mt-1' }, [
-              'Total Cash Held: ',
-              el('span', { class: 'font-bold text-indigo-600' }, fmtMoney(totalHeld))
-          ])
-      ]),
-      el('button', { class: 'text-slate-400 hover:text-slate-800 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
-  ]);
-
-  const tableWrap = el('div', { class: 'overflow-y-auto flex-1' });
-  const table = el('table', { class: 'w-full text-left' }, [
-      el('thead', { class: 'bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0' }, [
-          el('tr', {}, [
-              el('th', { class: 'p-3' }, 'Date & Time'),
-              el('th', { class: 'p-3' }, 'Type'),
-              el('th', { class: 'p-3' }, 'Reason'),
-              el('th', { class: 'p-3 text-right' }, 'Amount')
-          ])
-      ]),
-      el('tbody', {}, sortedMovements.map(m => {
-          const isOut = m.movement_type === 'cash_out';
-          return el('tr', { class: 'border-b border-slate-100 text-sm hover:bg-slate-50' }, [
-              el('td', { class: 'p-3 text-slate-600 whitespace-nowrap' }, new Date(m.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })),
-              el('td', { class: `p-3 font-semibold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, isOut ? 'Cash Taken' : 'Cash Returned'),
-              el('td', { class: 'p-3 text-slate-500' }, m.reason || '—'),
-              el('td', { class: `p-3 text-right font-bold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, `${isOut ? '-' : '+'}₹${Number(m.amount).toFixed(2)}`)
-          ]);
-      }))
-  ]);
-
-  tableWrap.appendChild(table);
-
-  card.appendChild(header);
-  card.appendChild(tableWrap);
-  card.appendChild(el('button', { class: 'w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium mt-2 shrink-0', onclick: () => overlay.remove() }, 'Close'));
-
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
 }
