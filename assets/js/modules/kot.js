@@ -16,167 +16,94 @@ export async function sendKOT() {
   const member = store.state.member;
 
   const newItems = cart.items.filter(l => !l._saved);
-
   if (!newItems.length) { toast('No new items to send', 'warn'); return null; }
-  if (!outlet || !tenant) { toast('No outlet selected', 'error'); return null; }
-  if (cart.orderType === 'dine_in' && !cart.tableId) { toast('Select a table first', 'warn'); return null; }
-
+  
   const tableRow = store.state.tables.find(t => t.id === cart.tableId);
 
-  let orderId = cart.orderId;
-  if (!orderId) {
-    const { data: orderNo, error: seqErr } = await supabase
-      .rpc('next_doc_number', { p_outlet: outlet.id, p_doc_type: 'order' });
-    if (seqErr || !orderNo) { toast('Order numbering failed', 'error'); return null; }
-
-    const orderType = ORDER_TYPE_VALUES.has(cart.orderType) ? cart.orderType : 'dine_in';
-
-    const payload = {
-      tenant_id: tenant.id, outlet_id: outlet.id, order_number: orderNo,
-      order_type: orderType, source: 'pos', status: 'in_kitchen',
+  const orderPayload = {
+      order_number: 'OFF-' + Date.now().toString(36).toUpperCase(),
+      tenant_id: tenant.id, outlet_id: outlet.id, order_type: cart.orderType || 'dine_in',
       table_id: cart.tableId || null, table_name_snapshot: tableRow?.name || null,
       guest_count: Number(cart.guestCount) || 1,
-      waiter_id: member?.id || null, cashier_id: member?.id || null,
-      created_by: store.state.session?.user?.id || null,
-      subtotal: cart.totals.gross || 0,
-      gross_total: cart.totals.gross || 0, 
-      service_charge_pct: Number(cart.serviceChargePct) || 0,
-    };
+      subtotal: cart.totals.gross || 0, gross_total: cart.totals.gross || 0
+  };
 
-    if (!ORDER_STATUS_VALUES.has(payload.status) || !ORDER_TYPE_VALUES.has(payload.order_type) || !ORDER_SOURCE_VALUES.has(payload.source)) {
-      toast('Internal: invalid enum', 'error'); return null;
-    }
-
-    const { data: order, error } = await supabase.from('orders').insert(payload).select().single();
-    if (error) { toast('Order insert failed: ' + error.message, 'error'); console.error(error); return null; }
-    orderId = order.id;
-    store.state.cart.orderId = orderId;
-  } else {
-    await supabase.from('orders').update({ status: 'in_kitchen' }).eq('id', orderId);
-  }
-
-  const itemRows = newItems.map(l => ({
-    tenant_id: tenant.id, outlet_id: outlet.id, order_id: orderId,
-    menu_item_id: l.menuItemId, variant_id: l.variantId,
-    name_snapshot: l.name, variant_name: l.variantName,
-    quantity: Number(l.qty), unit_price: Number(l.unitPrice),
-    tax_rate: Number(l.taxRate), tax_inclusive: !!l.taxInclusive,
-    status: 'sent_to_kitchen', station_id: l.stationId || null,
-    notes: l.notes || null, created_by: store.state.session?.user?.id || null,
+  const itemsPayload = newItems.map(l => ({
+      id: crypto.randomUUID(), // REQUIRED FOR SUPABASE
+      tenant_id: tenant.id,
+      outlet_id: outlet.id,
+      menu_item_id: l.menuItemId, 
+      name_snapshot: l.name,
+      quantity: Number(l.qty), 
+      unit_price: Number(l.unitPrice),
+      notes: l.notes || null,
+      status: 'sent_to_kitchen' // REQUIRED SO CART CAN SEE IT
   }));
 
-  const { data: insertedItems, error: iErr } = await supabase
-    .from('order_items').insert(itemRows).select();
-  if (iErr) { toast('Order items failed: ' + iErr.message, 'error'); console.error(iErr); return null; }
+  const kotPayload = {
+      id: crypto.randomUUID(),
+      tenant_id: tenant.id,
+      outlet_id: outlet.id,
+      kot_number: 'OFF-' + Date.now().toString().slice(-4),
+      table_name: tableRow?.name || 'Takeaway',
+      status: 'pending',
+      created_at: new Date().toISOString()
+  };
 
-  newItems.forEach((l, i) => {
-    l._saved = true;
-    l._dbId = insertedItems[i]?.id;
-    l.status = 'sent_to_kitchen';
-  });
-  window.dispatchEvent(new CustomEvent('cart:changed'));
+  try {
+      let orderId = cart.orderId;
+      if (!orderId) {
+          const { data: oData, error: oErr } = await supabase.from('orders').insert([orderPayload]).select().single();
+          if (oErr) throw oErr;
+          orderId = oData.id;
+          cart.orderId = orderId;
+      } else {
+          await supabase.from('orders').update({
+              subtotal: cart.totals.gross || 0, gross_total: cart.totals.gross || 0
+          }).eq('id', orderId);
+      }
 
-  // --- FETCH EXACT CATEGORIES FROM MENU ITEMS TABLE ---
-  const { data: menuItemsData } = await supabase
-      .from('menu_items')
-      .select('id, food_category')
-      .in('id', newItems.map(ni => ni.menuItemId));
-      
-  const itemCatMap = {};
-  (menuItemsData || []).forEach(mi => { 
-      itemCatMap[mi.id] = (mi.food_category || '').trim().toLowerCase(); 
-  });
+      itemsPayload.forEach(i => i.order_id = orderId);
+      const { error: iErr } = await supabase.from('order_items').insert(itemsPayload);
+      if (iErr) throw iErr;
 
-  const byStation = new Map();
-  insertedItems.forEach((it) => {
-    const catName = itemCatMap[it.menu_item_id] || '';
-    
-    console.log(`[KOT DEBUG NEW] Item: "${it.name_snapshot}", Category: "${catName}"`);
+      kotPayload.order_id = orderId;
+      const { error: kErr } = await supabase.from('kots').insert([kotPayload]);
+      if (kErr) throw kErr;
 
-    // SKIP BEVERAGES
-    if (catName === 'beverage' || catName === 'beverages') {
-        console.log(`[KOT DEBUG NEW] ✅ SKIPPING "${it.name_snapshot}"`);
-        return; 
-    }
-    
-    const key = it.station_id || 'default';
-    if (!byStation.has(key)) byStation.set(key, []);
-    byStation.get(key).push(it);
-  });
-  // --------------------------------------------
-  // --------------------------------------------
-  // --------------------------------------------
-  // --------------------------------------------
+      newItems.forEach(l => { l._saved = true; l.status = 'sent_to_kitchen'; });
+      window.dispatchEvent(new CustomEvent('cart:changed'));
 
-  let kotSuccess = 0;
-  for (const [stationId, items] of byStation.entries()) {
-    const { data: kotNo, error: kNoErr } = await supabase
-      .rpc('next_doc_number', { p_outlet: outlet.id, p_doc_type: 'kot' });
-    if (kNoErr || !kotNo) { toast('KOT numbering failed', 'error'); continue; }
+      if (CONFIG.LOCAL_SERVER_IP) {
+          const printItems = newItems.filter(i => {
+              let isBev = false;
+              const name = (i.name || '').toLowerCase();
+              const cat = (i.categoryName || i.category_name || i.category || '').toLowerCase();
+              const drinkWords = ['water', 'cola', 'soda', 'juice', 'drink', 'mojito', 'mocktail', 'tea', 'coffee', 'beer', 'wine', 'shake'];
+              if (drinkWords.some(w => name.includes(w))) isBev = true;
+              if (cat.includes('beverage') || cat.includes('drink') || cat.includes('mocktail')) isBev = true;
+              return !isBev;
+          });
 
-    const kotPayload = {
-      tenant_id: tenant.id, outlet_id: outlet.id, order_id: orderId,
-      station_id: stationId === 'default' ? null : stationId,
-      kot_number: kotNo, status: 'pending',
-      table_name: tableRow?.name || null,
-      order_type: ORDER_TYPE_VALUES.has(cart.orderType) ? cart.orderType : 'dine_in',
-      guest_count: Number(cart.guestCount) || 1,
-      created_by: store.state.session?.user?.id || null,
-    };
+          if (printItems.length > 0) {
+              fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      kot: kotPayload.kot_number,
+                      items: printItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes })),
+                      tableName: kotPayload.table_name,
+                      waiterName: member?.display_name
+                  })
+              }).catch(err => console.error('❌ LAN Print error:', err));
+          }
+      }
 
-    if (!KOT_STATUS_VALUES.has(kotPayload.status)) continue;
-
-    const { data: kot, error: kErr } = await supabase.from('kots').insert(kotPayload).select().single();
-    if (kErr) { toast('KOT insert failed: ' + kErr.message, 'error'); continue; }
-
-    // Append notes to the name for the printer
-    const printItems = items.map(it => ({
-        ...it,
-        name_snapshot: it.notes ? `${it.name_snapshot} (${it.notes})` : it.name_snapshot
-    }));
-
-    const kotItemsPayload = printItems.map(it => ({
-      tenant_id: tenant.id, kot_id: kot.id, order_item_id: it.id,
-      name_snapshot: it.name_snapshot, variant_name: it.variant_name,
-      quantity: Number(it.quantity), status: 'pending', notes: it.notes || null,
-    }));
-
-    const { error: kiErr } = await supabase.from('kot_items').insert(kotItemsPayload);
-    if (kiErr) { toast('KOT items failed: ' + kiErr.message, 'error'); continue; }
-    kotSuccess++;
-
-    // --- AUTO PRINT KOT ---
-    if (CONFIG.LOCAL_SERVER_IP) {
-      console.log("Sending KOT to LAN Server at:", CONFIG.LOCAL_SERVER_IP);
-      fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          kot: kot.kot_number,
-          items: items.map(i => ({ name: i.name_snapshot, quantity: i.quantity, variant: i.variant_name, notes: i.notes })),
-          tableName: cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away').split(' - ')[0] : (tableRow?.name || 'Takeaway').split(' - ')[0],
-          waiterName: member?.display_name
-        })
-      }).then(res => {
-        if (!res.ok) throw new Error('Server error: ' + res.status);
-        console.log("✅ KOT sent to Local Server");
-      }).catch(err => {
-        console.error('❌ LAN Print error:', err);
-      });
-    } else {
-      printKOT({
-        kot: kot,
-        items: items,
-        tableName: cart.orderType === 'takeaway' ? (cart.tableName || 'Take-away').split(' - ')[0] : (tableRow?.name || null)?.split(' - ')[0],
-        waiterName: member?.display_name || null,
-        orderType: cart.orderType
-      }).catch(err => console.error('Print error:', err));
-    }
+      toast('KOT sent to kitchen', 'success');
+      return orderId;
+  } catch (err) {
+      console.error(err);
+      toast('Failed to save order: ' + err.message, 'error');
+      return null;
   }
-
-  await supabase.rpc('recalc_order', { p_order_id: orderId });
-
-  if (kotSuccess === 0) { toast('Order saved but no KOT created', 'warn'); return null; }
-  toast(kotSuccess + ' KOT' + (kotSuccess > 1 ? 's' : '') + ' sent to kitchen', 'success');
-  return orderId;
 }

@@ -73,7 +73,7 @@ export async function openCheckoutModal(shouldPrint = false) {
               supabase.from('orders').update({ status: 'billed' }).eq('id', cart.orderId).then(() => {
                   const order = window.store.state.openOrders.find(o => o.id === cart.orderId);
                   if (order) order.status = 'billed';
-                  window.dispatchEvent(new CustomEvent('floorplan:reload'));
+                  
               });
           });
       }

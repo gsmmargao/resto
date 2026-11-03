@@ -126,15 +126,15 @@ function renderPOS(root) {
   });
   
   // MENU PANEL (Takes remaining space, scrolls internally)
-  const left = el('div', { 
-    class: 'w-full lg:w-2/3 lg:border-r border-slate-200',
-    style: 'flex: 1; overflow-y: auto; min-height: 0;'
+  const left = el('div', {
+    class: 'w-full lg:flex-1 lg:border-r border-slate-200 min-w-0',
+    style: 'height: calc(100vh - 120px); overflow-y: auto;'
   });
   
   // CART PANEL (Fixed 50% height on mobile, scrolls internally)
-  const right = el('div', { 
-    class: 'w-full lg:w-1/3 flex flex-col bg-white border-t lg:border-t-0 border-slate-200',
-    style: 'height: 50dvh; max-height: 50dvh; flex-shrink: 0; overflow: hidden; position: relative; display: flex; flex-direction: column;'
+  const right = el('div', {
+    class: 'w-full lg:w-[380px] xl:w-[420px] shrink-0 flex flex-col bg-white border-t lg:border-t-0 lg:border-l border-slate-200',
+    style: 'height: calc(100vh - 120px); overflow: hidden; position: relative; display: flex; flex-direction: column;'
   });
 
   renderMenuPanel(left, { onAddItem: ({ item, variant, qty, notes, custom_price }) => addToCart({ item, variant, qty, notes, custom_price }) });

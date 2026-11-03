@@ -122,8 +122,9 @@ export async function openBillReprintModal(invoiceId) {
           
           try {
             // Use the receiptData already built at the top of the function
-            const { CONFIG } = await import('../../../config.js');
-            const printUrl = `https://${CONFIG.LOCAL_SERVER_IP || '192.168.100.19'}:3000/api/print-bill`;
+            
+            const serverIP = (typeof CONFIG !== 'undefined' && CONFIG.LOCAL_SERVER_IP) ? CONFIG.LOCAL_SERVER_IP : '192.168.100.19';
+            const printUrl = `https://${serverIP}:3000/api/print-bill`;
             
             const res = await fetch(printUrl, {
               method: 'POST', 

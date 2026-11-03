@@ -354,14 +354,6 @@ export function openTableActionModal(table, openOrder, onPickTable) {
     onclick: () => { overlay.remove(); if (typeof onPickTable === 'function') onPickTable(table, openOrder, 'pos'); }
   }, 'Take Order'));
 
-  // 2. Generate Bill (Green)
-  body.appendChild(el('button', {
-    class: 'w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-lg transition shadow-sm text-sm',
-    onclick: () => { 
-        overlay.remove(); 
-        if (typeof onPickTable === 'function') onPickTable(table, openOrder, 'generate_bill'); 
-    }
-  }, 'Generate Bill'));
 
   // 3. View All KOTs (Grey)
   body.appendChild(el('button', {
@@ -416,7 +408,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                     <select id="table-selector" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
                         ${tables.map(t => `<option value="${t.id}" ${t.id === currentOrder.id ? 'selected' : ''}>${t.name}</option>`).join('')}
                     </select>
-                    <button class="px-3 py-2 bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-sm rounded-lg shadow-sm transition flex items-center gap-2" id="btn-shift-table">
+                    <button style="display: none;" class="px-3 py-2 bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-sm rounded-lg shadow-sm transition flex items-center gap-2" id="btn-shift-table">
                         ⇅ Shift
                     </button>
                 </div>
@@ -465,33 +457,33 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
 
         try {
             const { data: kots } = await supabase.from('kots')
-                .select('*, kot_items(*)')
+                .select('*')
                 .eq('order_id', currentOrder.id)
                 .order('created_at', { ascending: false });
 
             const { data: orderItems } = await supabase.from('order_items')
-                .select('id, unit_price')
+                .select('*')
                 .eq('order_id', currentOrder.id);
 
-            const priceMap = new Map((orderItems || []).map(i => [i.id, Number(i.unit_price || 0)]));
+            
             
             if (!kots || !kots.length) {
                 body.innerHTML = '<div class="text-center py-10 text-slate-400">No KOTs found for this order.</div>';
                 return;
             }
 
-            body.innerHTML = kots.map(k => {
+            body.innerHTML = [kots[0]].map(k => {
                 const dateStr = new Date(k.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
                 
                 // Separate active and voided items
-                const activeItems = (k.kot_items || []).filter(it => it.status !== 'void' && it.status !== 'cancelled');
-                const voidedItems = (k.kot_items || []).filter(it => it.status === 'void' || it.status === 'cancelled');
+                const activeItems = (orderItems || []).filter(it => it.status !== 'void' && it.status !== 'cancelled');
+                const voidedItems = (orderItems || []).filter(it => it.status === 'void' || it.status === 'cancelled');
                 
                 // Calculate Total based ONLY on active items
-                const totalPrice = activeItems.reduce((sum, it) => sum + (Number(it.quantity) * (priceMap.get(it.order_item_id) || 0)), 0);
+                const totalPrice = activeItems.reduce((sum, it) => sum + (Number(it.quantity) * Number(it.unit_price || 0)), 0);
                 
                 const activeRows = activeItems.map(it => {
-                    const price = priceMap.get(it.order_item_id) || 0;
+                    const price = Number(it.unit_price || 0);
                     return `
                     <div class="flex justify-between items-center py-2 border-b border-slate-100 last:border-0">
                         <span class="text-sm font-semibold text-slate-800">${it.quantity}x ${it.name_snapshot}</span>
@@ -500,7 +492,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                 `}).join('');
 
                 const voidedRows = voidedItems.map(it => {
-                    const price = priceMap.get(it.order_item_id) || 0;
+                    const price = Number(it.unit_price || 0);
                     return `
                     <div class="flex flex-col py-2 border-b border-red-100 last:border-0 bg-red-50 px-2 rounded">
                         <div class="flex justify-between items-center line-through text-red-500">
@@ -553,7 +545,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                     if (!kot) return;
                     const payload = {
                         kot: kot.kot_number,
-                        items: (kot.kot_items || []).filter(it => it.status !== 'void').map(it => ({ quantity: it.quantity, name: it.name_snapshot, variant: it.variant_name, notes: it.notes })),
+                        items: (orderItems || []).filter(it => it.status !== 'void').map(it => ({ quantity: it.quantity, name: it.name_snapshot, variant: it.variant_name, notes: it.notes })),
                         tableName: currentTableName, waiterName: 'admin'
                     };
                     try {
@@ -571,10 +563,10 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                     if (typeof onPickTable === 'function') await onPickTable(getTableObj(currentOrder, currentTableName), currentOrder);
                     setTimeout(() => {
                         const cart = window.store.state.cart;
-                        (kot.kot_items || []).filter(it => it.status !== 'void').forEach(it => {
+                        (orderItems || []).filter(it => it.status !== 'void').forEach(it => {
                             const existing = cart.items.find(i => i.item_id === it.order_item_id);
                             if (existing) existing.qty += Number(it.quantity);
-                            else cart.items.push({ item_id: it.order_item_id, name: it.name_snapshot, price: priceMap.get(it.order_item_id) || 0, qty: Number(it.quantity), tax_rate: 0 });
+                            else cart.items.push({ item_id: it.order_item_id, name: it.name_snapshot, price: Number(it.unit_price || 0), qty: Number(it.quantity), tax_rate: 0 });
                         });
                         window.dispatchEvent(new CustomEvent('cart:changed'));
                         if (window.toast) window.toast('Items added to cart', 'success');
@@ -586,7 +578,8 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                 btn.onclick = (e) => {
                     const kot = kots.find(k => k.id === e.currentTarget.getAttribute('data-id'));
                     if (!kot) return;
-                    openEditKOTModal(kot, currentOrder, currentTableName, priceMap, () => renderModalContent());
+                    kot.items = orderItems; // Attach items so the edit modal can read them
+                    openEditKOTModal(kot, currentOrder, currentTableName, new Map((orderItems || []).map(i => [i.id, Number(i.unit_price || 0)])), () => renderModalContent());
                 };
             });
 
@@ -705,10 +698,10 @@ function openEditKOTModal(kot, currentOrder, currentTableName, priceMap, onSave)
     
     const menuItems = (window.store.state.menuItems || []).filter(m => m.is_active !== false);
 
-    let kotItems = [...(kot.kot_items || [])].map(it => ({
+    let kotItems = [...(kot.items || [])].map(it => ({
         ...it,
         original_qty: Number(it.quantity),
-        unit_price: priceMap.get(it.order_item_id) || 0
+        unit_price: Number(it.unit_price || 0)
     }));
 
     card.innerHTML = `

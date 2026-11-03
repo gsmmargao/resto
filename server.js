@@ -184,8 +184,9 @@ const options = {
   cert: fs.readFileSync(path.join(__dirname, 'cert.pem'))
 };
 
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
 https.createServer(options, app).listen(3000, '0.0.0.0', () => {
   console.log('🚀 Local HTTPS Server running on https://0.0.0.0:3000');
 });
 // Silence favicon 404s
-app.get('/favicon.ico', (req, res) => res.status(204).end());

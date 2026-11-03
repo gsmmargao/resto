@@ -188,6 +188,8 @@ export function recalcCart() { _computeTotals(store.state.cart); notifyCartChang
 
 export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTable, onEditItem }) {
   root.innerHTML = '';
+  // Force the container to fill the height and use flexbox
+  root.className = 'h-full flex flex-col bg-white';
   const cart = store.state.cart;
   const t = cart.totals || { gross:0, taxable:0, tax:0, discount:0, serviceCharge:0, roundOff:0, grand:0 };
 

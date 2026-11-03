@@ -102,7 +102,7 @@ export async function renderReports(root) {
     (isAdmin || isPurchaser) ? ['purchases', 'Purchase Report'] : null,
     !isPurchaser ? ['overview', 'Overview'] : null,
     !isPurchaser ? ['sales', 'Sales Trend'] : null,
-    !isPurchaser ? ['items', 'Item Mix'] : null,
+    !isPurchaser ? ['items', 'Item'] : null,
     !isPurchaser ? ['staff', 'Staff'] : null,
     !isPurchaser ? ['upi', 'UPI'] : null,
     !isPurchaser ? ['cash', 'Cashbook'] : null,
@@ -176,7 +176,7 @@ function itemTable(title, rows, metric) {
   if (rows.length === 0) {
     tbody.appendChild(el('tr', {}, [el('td', { class: 'px-4 py-4 text-sm text-slate-500 text-center', colspan: 2 }, 'No data')]));
   } else {
-    rows.slice(0, 10).forEach(r => {
+    rows.forEach(r => {
       let value = '';
       if (metric === 'qty') value = r.qty;
       else if (metric === 'revenue') value = fmtMoney(r.revenue);
@@ -189,7 +189,7 @@ function itemTable(title, rows, metric) {
       ]));
     });
   }
-  card.appendChild(el('table', { class: 'w-full' }, [tbody]));
+  card.appendChild(el('div', { class: 'max-h-[600px] overflow-y-auto' }, [el('table', { class: 'w-full' }, [tbody])]));
   return card;
 }
 
@@ -323,10 +323,9 @@ export async function renderItemMix() {
   }));
 
   const wrap = el('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-3' });
-  wrap.appendChild(itemTable('Top Sellers (by qty)', [...rows].sort((a, b) => b.qty - a.qty), 'qty'));
-  wrap.appendChild(itemTable('Top Revenue', [...rows].sort((a, b) => b.revenue - a.revenue), 'revenue'));
-  wrap.appendChild(itemTable('Top Profit', [...rows].sort((a, b) => b.profit - a.profit), 'profit'));
-  wrap.appendChild(itemTable('Lowest Margin', rows.filter(r => r.revenue > 0).sort((a, b) => a.marginPct - b.marginPct), 'margin'));
+  // Show ALL items sorted by quantity sold
+  const allItemsByQty = [...rows].sort((a, b) => b.qty - a.qty);
+  wrap.appendChild(itemTable('All Items (by Qty)', allItemsByQty, 'qty'));
   return wrap;
 }
 

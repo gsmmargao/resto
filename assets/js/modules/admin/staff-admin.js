@@ -19,7 +19,7 @@ const ROLES = [
   { id: 'cashier',     label: 'Cashier',      color: 'bg-emerald-100 text-emerald-700', desc: 'POS, billing, shift management' },
   { id: 'waiter',      label: 'Waiter',       color: 'bg-sky-100 text-sky-700',       desc: 'Table orders, KOT firing (no billing)' },
   { id: 'chef',        label: 'Chef',         color: 'bg-orange-100 text-orange-700', desc: 'Kitchen display, KOT status' },
-  { id: 'store_keeper',label: 'Store Keeper', color: 'bg-indigo-100 text-indigo-700', desc: 'Inventory, physical stock counts' },,
+  { id: 'store_keeper',label: 'Store Keeper', color: 'bg-indigo-100 text-indigo-700', desc: 'Inventory, physical stock counts' },
   { id: 'purchaser', label: 'Purchaser' }
 ];
 
@@ -40,6 +40,16 @@ export async function renderStaffAdmin(root) {
 }
 
 async function loadAll() {
+  // WAIT FOR TENANT TO LOAD (Fixes crash on page refresh)
+  let retries = 20;
+  while ((!store.state.tenant || !store.state.tenant.id) && retries > 0) {
+    await new Promise(r => setTimeout(r, 200));
+    retries--;
+  }
+  if (!store.state.tenant) {
+    throw new Error('Restaurant settings not loaded yet. Please refresh the page.');
+  }
+  
   const tenantId = store.state.tenant.id;
 
   const [memRes, outRes, moRes] = await Promise.all([
