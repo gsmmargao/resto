@@ -50,12 +50,16 @@ export async function renderUPI() {
       .lte('created_at', rangeEnd().toISOString());
 
     // 3. Fetch Digital Supplier Payments (UPI/Card)
-    const { data: supplierPays } = await supabase.from('supplier_payments')
+    const { data: supplierPaysRaw } = await supabase.from('supplier_payments')
       .select('*, suppliers(name)')
       .eq('tenant_id', tenantId)
-      .in('payment_mode', ['upi', 'card'])
       .gte('created_at', rangeStart().toISOString())
       .lte('created_at', rangeEnd().toISOString());
+      
+    const supplierPays = (supplierPaysRaw || []).filter(p => {
+        const m = String(p.payment_mode || p.mode || '').toLowerCase();
+        return m === 'upi' || m === 'card';
+    });
 
     // 4. Fetch Digital Tip Payouts (UPI/Card)
     const { data: tipPayouts } = await supabase.from('tip_payouts')

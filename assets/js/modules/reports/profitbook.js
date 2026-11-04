@@ -41,7 +41,8 @@ export async function renderProfitBook() {
     const supplierOutstanding = Math.max(0, totalPurchases - totalSupplierPayments);
     
     // Calculate the final Net Profit
-    const netProfit = totalRevenue + totalTips - totalExpenses - supplierOutstanding;
+    // Correct accounting: Deduct TOTAL purchases (paid + unpaid) to get true profit
+    const netProfit = totalRevenue + totalTips - totalExpenses - totalPurchases;
 
     // Group payments by invoice for the table
     const invoiceMap = {};
@@ -61,7 +62,7 @@ export async function renderProfitBook() {
 
     wrapper.innerHTML = `
       <div class="max-w-7xl mx-auto space-y-6">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <div class="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm">
             <div class="text-slate-500 text-xs uppercase tracking-widest font-bold">Total Revenue (Realized)</div>
             <div class="text-3xl font-bold text-slate-800 mt-1">₹${totalRevenue.toFixed(2)}</div>
@@ -79,6 +80,11 @@ export async function renderProfitBook() {
             <div class="text-amber-800 text-xs uppercase tracking-widest font-bold">Supplier Dues</div>
             <div class="text-3xl font-bold text-amber-600 mt-1">₹${supplierOutstanding.toFixed(2)}</div>
             <div class="text-xs text-amber-500 mt-1">Unpaid to vendors</div>
+          </div>
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 shadow-sm">
+            <div class="text-blue-600 text-xs uppercase tracking-widest font-bold">Total Purchases</div>
+            <div class="text-3xl font-bold text-blue-700 mt-1">₹${totalPurchases.toFixed(2)}</div>
+            <div class="text-xs text-blue-500 mt-1">Suppliers & Quick Buy</div>
           </div>
           <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm text-white">
             <div class="text-slate-400 text-xs uppercase tracking-widest font-bold">Net Profit</div>

@@ -5,6 +5,7 @@ import { state } from './helpers.js';
 
 export async function renderExpenses() {
   const wrapper = el('div', { class: 'w-full space-y-6' });
+  const isAdmin = ['admin', 'owner', 'super-admin'].includes(store.state.member?.role);
   wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Expense Book...</div>';
   
   const outletId = store.state.outlet.id;
@@ -48,10 +49,11 @@ export async function renderExpenses() {
               <th class="px-5 py-3">Notes</th>
               <th class="px-5 py-3 text-center">Mode</th>
               <th class="px-5 py-3 text-right">Amount</th>
+              ${isAdmin ? '<th class="px-5 py-3 text-right">Action</th>' : ''}
             </tr>
           </thead>
           <tbody>
-            ${(!expenses || expenses.length === 0) ? '<tr><td colspan="5" class="text-center py-8 text-slate-400 text-sm">No expenses in this period.</td></tr>' : 
+            ${(!expenses || expenses.length === 0) ? '<tr><td colspan="${isAdmin ? 6 : 5}" class="text-center py-8 text-slate-400 text-sm">No expenses in this period.</td></tr>' : 
               expenses.map(e => {
                 const displayName = e.staff_name || e.custom_category || e.category;
                 return `
@@ -59,8 +61,21 @@ export async function renderExpenses() {
                   <td class="px-5 py-3 text-sm text-slate-600">${new Date(e.created_at).toLocaleDateString('en-GB')}</td>
                   <td class="px-5 py-3 text-sm font-semibold text-slate-800">${displayName}</td>
                   <td class="px-5 py-3 text-sm text-slate-500">${e.notes || '—'}</td>
-                  <td class="px-5 py-3 text-center"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">${e.payment_mode.toUpperCase()}</span></td>
+                  <td class="px-5 py-3 text-center">
+                  ${isAdmin ? `
+                      <select class="mode-select px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold border border-slate-200 outline-none cursor-pointer hover:bg-slate-200 transition" data-id="${e.id}" data-old="${e.payment_mode}">
+                          <option value="cash" ${e.payment_mode === 'cash' ? 'selected' : ''}>CASH</option>
+                          <option value="upi" ${e.payment_mode === 'upi' ? 'selected' : ''}>UPI</option>
+                          <option value="card" ${e.payment_mode === 'card' ? 'selected' : ''}>CARD</option>
+                      </select>
+                  ` : `<span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">${e.payment_mode.toUpperCase()}</span>`}
+                  </td>
                   <td class="px-5 py-3 text-sm font-bold text-red-600 text-right">-₹${Number(e.amount).toFixed(2)}</td>
+                  ${isAdmin ? `<td class="px-5 py-3 text-right">
+                      <button class="btn-delete-exp text-red-500 hover:text-red-700 transition p-1" data-id="${e.id}" title="Delete Expense">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                      </button>
+                  </td>` : ''}
                 </tr>
               `}).join('')
             }
@@ -69,6 +84,51 @@ export async function renderExpenses() {
       </div>
     `;
 
+    
+    if (isAdmin) {
+        wrapper.querySelectorAll('.mode-select').forEach(sel => {
+            sel.addEventListener('change', async (e) => {
+                const newMode = e.target.value;
+                const id = e.target.dataset.id;
+                const oldMode = e.target.dataset.old;
+                e.target.disabled = true;
+                e.target.style.opacity = '0.5';
+                
+                const { error } = await supabase.from('expenses').update({ payment_mode: newMode }).eq('id', id);
+                e.target.disabled = false;
+                e.target.style.opacity = '1';
+                
+                if (error) {
+                    toast('Failed: ' + error.message, 'error');
+                    e.target.value = oldMode;
+                } else {
+                    toast('Payment mode updated', 'success');
+                    e.target.dataset.old = newMode;
+                }
+            });
+        });
+
+        wrapper.querySelectorAll('.btn-delete-exp').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                if (!confirm('Are you sure you want to delete this expense permanently?')) return;
+                const id = btn.dataset.id;
+                btn.disabled = true;
+                btn.innerHTML = '<div class="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div>';
+                
+                const { error } = await supabase.from('expenses').delete().eq('id', id);
+                if (error) {
+                    toast('Failed: ' + error.message, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>';
+                } else {
+                    toast('Expense deleted', 'success');
+                    const newHtml = await renderExpenses();
+                    wrapper.replaceWith(newHtml);
+                }
+            });
+        });
+    }
+    
     wrapper.querySelector('#btn-add-expense').onclick = () => openAddExpenseModal(() => renderExpenses().then(html => wrapper.replaceWith(html)));
     wrapper.querySelector('#btn-view-ledger').onclick = () => openFullLedgerPage();
 

@@ -10,7 +10,7 @@ export async function renderCashbookDetailed() {
 
   try {
     // 1. Fetch ALL Data (No date filters in DB query)
-    const [payRes, expRes, cashRes] = await Promise.all([
+    const [payRes, expRes, cashRes, supRes, quickRes, poRes] = await Promise.all([
       supabase.from('payments')
         .select('amount, tip_amount, mode, paid_at, reference_no')
         .eq('outlet_id', outletId)
@@ -22,16 +22,25 @@ export async function renderCashbookDetailed() {
       supabase.from('cash_movements')
         .select('person_name, movement_type, amount, created_at, reason')
         .eq('outlet_id', outletId)
-        .not('person_name', 'is', null)
+        .not('person_name', 'is', null),
+      supabase.from('supplier_payments').select('*').eq('tenant_id', store.state.tenant.id),
+      supabase.from('purchases').select('*').eq('tenant_id', store.state.tenant.id),
+      supabase.from('purchase_orders').select('*').eq('tenant_id', store.state.tenant.id)
     ]);
 
     if (payRes.error) throw payRes.error;
     if (expRes.error) throw expRes.error;
     if (cashRes.error) throw cashRes.error;
+    if (supRes.error) throw supRes.error;
+    if (quickRes.error) throw quickRes.error;
+    if (poRes.error) throw poRes.error;
 
     const payments = payRes.data || [];
     const expenses = expRes.data || [];
     const cashMovements = cashRes.data || [];
+    const supplierPayments = supRes.data || [];
+    const quickPurchases = quickRes.data || [];
+    const purchaseOrders = poRes.data || [];
 
     const rStart = rangeStart().getTime();
     const rEnd = rangeEnd().getTime();
@@ -64,26 +73,51 @@ export async function renderCashbookDetailed() {
       }
     });
 
-    // 3. Process Expenses (All-Time for Summary, Date-Filtered for Ledger)
-    expenses.forEach(e => {
-        const amt = Number(e.amount);
+    
+    // 2b. Process All Outflows (Supplier Payments, Purchases, Expenses)
+    const processOutflow = (amt, mode, time, type, desc) => {
+        const safeMode = String(mode || '').toLowerCase();
+        if (safeMode === 'credit' || !safeMode) return; // Strictly ignore credit/unpaid
+        
+        const safeAmt = Number(amt || 0);
         
         // Summary Totals (All Time)
-        if (e.payment_mode === 'cash') cashOut += amt;
-        if (e.payment_mode === 'upi' || e.payment_mode === 'card') upiOut += amt;
+        if (safeMode === 'cash') cashOut += safeAmt;
+        if (safeMode === 'upi' || safeMode === 'card') upiOut += safeAmt;
         
         // Ledger List (Date Filtered)
-        const eTime = new Date(e.created_at).getTime();
-        if (eTime >= rStart && eTime <= rEnd) {
+        if (time >= rStart && time <= rEnd) {
             ledger.push({
-                time: e.created_at,
-                type: 'Expense',
-                desc: `${e.category} ${e.staff_name ? '(' + e.staff_name + ')' : ''} ${e.custom_category ? '- ' + e.custom_category : ''}`,
-                mode: e.payment_mode.toUpperCase(),
+                time: time,
+                type: type,
+                desc: desc,
+                mode: safeMode.toUpperCase(),
                 in: 0,
-                out: amt
+                out: safeAmt
             });
         }
+    };
+
+    // A. Supplier Payments
+    (supplierPayments || []).forEach(sp => {
+        processOutflow(sp.amount, sp.payment_mode || sp.mode, new Date(sp.created_at).getTime(), 'Expense', sp.notes || 'Paid to supplier');
+    });
+
+    // B. Quick Purchases
+    (quickPurchases || []).forEach(p => {
+        processOutflow(p.total, p.payment_mode, new Date(p.created_at).getTime(), 'Purchase', 'Quick Purchase');
+    });
+
+    // C. Purchase Orders (POs)
+    (purchaseOrders || []).forEach(p => {
+        processOutflow(p.grand_total, p.payment_mode, new Date(p.created_at).getTime(), 'Purchase', 'PO: ' + (p.po_number || 'N/A'));
+    });
+
+    // D. General Expenses
+    (expenses || []).forEach(e => {
+        let desc = `${e.category || ''} ${e.staff_name ? '(' + e.staff_name + ')' : ''} ${e.custom_category ? '- ' + e.custom_category : ''}`.trim();
+        if (!desc) desc = e.notes || 'Expense';
+        processOutflow(e.amount, e.payment_mode, new Date(e.created_at).getTime(), 'Expense', desc);
     });
 
     // 4. Process Cash Movements (All-Time for Person Ledger)
