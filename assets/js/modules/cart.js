@@ -63,6 +63,7 @@ export function addToCart({ item, variant, addons = [], notes = '', qty = 1, cus
     existing.qty += qty;
   } else {
     const category = store.state.categories.find(c => c.id === item.category_id);
+    const catName = item.category_name || (category ? category.name : 'Unknown');
     const categoryName = category ? category.name : 'Unknown';
     
     cart.items.push({
@@ -71,7 +72,8 @@ export function addToCart({ item, variant, addons = [], notes = '', qty = 1, cus
       name: item.name, variantName: variant?.name || null,
       qty: qty, unitPrice: Number(price), taxRate: Number(taxRate),
       taxInclusive: !!item.tax_inclusive, stationId: item.station_id || null,
-      categoryName, // <--- SAVES THE CATEGORY
+      categoryName: catName,
+      print_kot: item.print_kot !== false, // <--- SAVES THE CATEGORY
       addons, notes,
     });
   }

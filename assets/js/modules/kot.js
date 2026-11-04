@@ -75,15 +75,7 @@ export async function sendKOT() {
       window.dispatchEvent(new CustomEvent('cart:changed'));
 
       if (CONFIG.LOCAL_SERVER_IP) {
-          const printItems = newItems.filter(i => {
-              let isBev = false;
-              const name = (i.name || '').toLowerCase();
-              const cat = (i.categoryName || i.category_name || i.category || '').toLowerCase();
-              const drinkWords = ['water', 'cola', 'soda', 'juice', 'drink', 'mojito', 'mocktail', 'tea', 'coffee', 'beer', 'wine', 'shake'];
-              if (drinkWords.some(w => name.includes(w))) isBev = true;
-              if (cat.includes('beverage') || cat.includes('drink') || cat.includes('mocktail')) isBev = true;
-              return !isBev;
-          });
+          const printItems = newItems.filter(i => i.print_kot !== false);
 
           if (printItems.length > 0) {
               fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
@@ -91,7 +83,7 @@ export async function sendKOT() {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                       kot: kotPayload.kot_number,
-                      items: printItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes })),
+                      items: printItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes, category: i.categoryName })),
                       tableName: kotPayload.table_name,
                       waiterName: member?.display_name
                   })

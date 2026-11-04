@@ -280,8 +280,11 @@ async function openItemEditor(root, item) {
       else { priceIn.disabled = false; priceIn.classList.remove('bg-slate-100'); }
     }
   });
+  const printKotCb = el('input', { type: 'checkbox', class: 'mr-2 rounded text-indigo-600 focus:ring-indigo-500', checked: draft.print_kot !== false });
+  printKotCb.addEventListener('change', (e) => { draft.print_kot = e.target.checked; });
+  const printKotWrap = el('label', { class: 'flex items-center mt-2 text-sm text-slate-600 cursor-pointer' }, [printKotCb, 'Print to KOT (Kitchen)']);
   const asPerSizeWrap = el('label', { class: 'flex items-center mt-2 text-sm text-slate-600 cursor-pointer' }, [asPerSizeCb, 'As per size (Amount = 0)']);
-  card.appendChild(field('Amount', el('div', {}, [priceIn, asPerSizeWrap])));
+  card.appendChild(field('Amount', el('div', {}, [priceIn, asPerSizeWrap, printKotWrap])));
 
   const btnRow = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' }, [
     el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Cancel'),
@@ -293,20 +296,26 @@ async function openItemEditor(root, item) {
         
         btn.disabled = true; btn.textContent = 'Saving…';
         try {
+          // FORCE the draft to read the exact checkbox state
+          draft.print_kot = printKotCb.checked;
+
           const payload = {
             tenant_id: draft.tenant_id,
             name: draft.name.trim(),
             short_name: draft.short_name.trim().toUpperCase() || null,
             food_category: draft.food_category,
             base_price: Number(draft.base_price) || 0, is_as_per_size: draft.is_as_per_size,
-            is_active: true
+            is_active: true,
+            print_kot: printKotCb.checked
           };
+          console.log('Sending to Supabase:', payload);
           if (isNew) {
             const { error } = await supabase.from('menu_items').insert(payload);
             if (error) throw error;
           } else {
-            const { error } = await supabase.from('menu_items').update(payload).eq('id', item.id);
+            const { data: updated, error } = await supabase.from('menu_items').update(payload).eq('id', item.id).select();
             if (error) throw error;
+            if (!updated || updated.length === 0) throw new Error('Database rejected the update. Check permissions.');
           }
           toast('Saved', 'success');
           overlay.remove();

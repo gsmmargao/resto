@@ -109,8 +109,8 @@ export async function renderCashbookDetailed() {
     wrapper.innerHTML = `
       <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-6">
         <div class="px-5 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-            <h3 class="font-bold text-slate-800 text-sm">Cash & UPI / Card Ledger</h3>
-            <span class="text-xs font-semibold text-slate-500">${ledger.length} entries</span>
+            <h3 class="font-bold text-slate-800 text-sm">Cash Ledger (In & Out)</h3>
+            <span class="text-xs font-semibold text-slate-500">${ledger.filter(l => String(l.mode || "").toUpperCase().includes("CASH")).length} entries</span>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-left">
@@ -157,6 +157,12 @@ export async function renderCashbookDetailed() {
                 <td class="px-4 py-3 text-right text-red-600 font-medium">₹${upiOut.toFixed(2)}</td>
                 <td class="px-4 py-3 text-right font-bold text-slate-800">₹${(upiIn - upiOut).toFixed(2)}</td>
               </tr>
+              <tr class="bg-slate-100 border-t-2 border-slate-300">
+                <td class="px-4 py-3 font-black text-slate-900 uppercase">Total (Cash + UPI)</td>
+                <td class="px-4 py-3 text-right text-emerald-700 font-bold">₹${(cashIn + upiIn).toFixed(2)}</td>
+                <td class="px-4 py-3 text-right text-red-700 font-bold">₹${(cashOut + upiOut).toFixed(2)}</td>
+                <td class="px-4 py-3 text-right font-black text-indigo-800">₹${((cashIn - cashOut) + (upiIn - upiOut)).toFixed(2)}</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -197,35 +203,36 @@ export async function renderCashbookDetailed() {
     });
 
     // --- PAGINATION LOGIC ---
+    const cashLedger = ledger.filter(l => String(l.mode || '').trim().toUpperCase().includes('CASH'));
     let currentPage = 1;
     const pageSize = 10;
-    const totalPages = Math.max(1, Math.ceil(ledger.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(cashLedger.length / pageSize));
 
     const updateTable = (page) => {
         currentPage = page;
         const start = (currentPage - 1) * pageSize;
-        const paginated = ledger.slice(start, start + pageSize);
+        const paginated = cashLedger.slice(start, start + pageSize);
 
-        const tbody = document.getElementById('ledger-tbody');
+        const tbody = wrapper.querySelector('#ledger-tbody');
         if (!tbody) return;
 
         tbody.innerHTML = paginated.length === 0 
             ? '<tr><td colspan="6" class="text-center py-6 text-slate-400 text-sm">No transactions in this period</td></tr>' 
             : paginated.map(l => `
                 <tr class="border-b border-slate-50 hover:bg-slate-50">
-                  <td class="px-4 py-3 text-xs text-slate-500">${new Date(l.time).toLocaleString('en-GB')}</td>
+                  <td class="px-4 py-3 text-xs text-slate-500">${l.time ? new Date(l.time).toLocaleString('en-GB') : '—'}</td>
                   <td class="px-4 py-3 text-sm font-medium ${l.type === 'Dues Paid' ? 'text-amber-600' : l.type === 'Expense' ? 'text-red-600' : 'text-slate-700'}">${l.type}</td>
                   <td class="px-4 py-3 text-sm text-slate-600">${l.desc}</td>
                   <td class="px-4 py-3 text-center"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">${l.mode}</span></td>
-                  <td class="px-4 py-3 text-right text-emerald-600 font-medium">${l.in > 0 ? '+₹' + l.in.toFixed(2) : '₹0.00'}</td>
-                  <td class="px-4 py-3 text-right text-red-600 font-medium">${l.out > 0 ? '-₹' + l.out.toFixed(2) : '₹0.00'}</td>
+                  <td class="px-4 py-3 text-right text-emerald-600 font-medium">${Number(l.in || 0) > 0 ? '+₹' + Number(l.in).toFixed(2) : '₹0.00'}</td>
+                  <td class="px-4 py-3 text-right text-red-600 font-medium">${Number(l.out || 0) > 0 ? '-₹' + Number(l.out).toFixed(2) : '₹0.00'}</td>
                 </tr>
             `).join('');
 
         const prevDisabled = currentPage === 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer';
         const nextDisabled = currentPage === totalPages ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 cursor-pointer';
 
-        const paginationControls = document.getElementById('pagination-controls');
+        const paginationControls = wrapper.querySelector('#pagination-controls');
         if (paginationControls) {
             paginationControls.innerHTML = `
                 <span class="text-xs text-slate-500">Showing ${ledger.length === 0 ? 0 : start + 1} to ${Math.min(start + pageSize, ledger.length)} of ${ledger.length} entries</span>
