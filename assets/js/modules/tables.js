@@ -25,7 +25,19 @@ export async function loadTables() {
     }, []),
   ]);
 
-  store.set('tables', tRes.data || []);
+  let finalTables = tRes.data || [];
+  
+  // FIX: If cache is empty, force a direct fetch to prevent missing tables
+  if (finalTables.length === 0) {
+      console.log('[Tables] Cache empty, forcing direct fetch from Supabase...');
+      const { data: freshData } = await supabase.from('dining_tables').select('*')
+          .eq('outlet_id', outletId).eq('is_active', true).order('sort_order');
+      if (freshData && freshData.length > 0) {
+          finalTables = freshData;
+      }
+  }
+
+  store.set('tables', finalTables);
   store.set('areas',  aRes.data || []);
 
   try {

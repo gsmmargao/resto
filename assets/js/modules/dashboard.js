@@ -10,15 +10,17 @@ import { navigate } from '../router.js';
 
 let realtimeChannel = null;
 
-export async function renderDashboard(root) {
+export async function renderDashboard(root, skipFetch = false) {
   root.innerHTML = '';
   if (skipFetch !== true) { // Fix: Router passes params object, ensure we only skip on explicit true
       if (!skipFetch) {
       try {
         // Fetch in parallel for superfast loading
         await Promise.all([loadTables(), refreshOpenOrders()]);
-  } catch (e) {
-    console.error("Failed to load data", e);
+      } catch (e) {
+        console.error("Failed to load data", e);
+      }
+    }
   }
 
   const wrapper = el('div', { class: 'h-full flex flex-col' });
@@ -231,9 +233,11 @@ function renderPOS(root) {
 
 
 window.addEventListener('floorplan:reload', async () => {
-    const root = document.getElementById('app-view');
-    if (root && (window.location.hash === '#dashboard' || window.location.hash === '' || window.location.hash.includes('dashboard'))) {
-        await renderDashboard(root);
+    // SAFE FIX: Only redraw the tables container, never wipe the whole dashboard
+    const content = document.getElementById('dashboard-content');
+    if (content && typeof renderTables === 'function') {
+        await refreshOpenOrders(); // Refresh data locally
+        renderTables(content);
     }
 });
 
