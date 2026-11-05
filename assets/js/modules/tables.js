@@ -8,47 +8,33 @@ import { loadOrderIntoCart } from './cart.js';
 
 export async function loadTables() {
   const outletId = store.state.outlet?.id;
-  if (!outletId) return;
-
-  const [tRes, aRes] = await Promise.all([
-    cachedQuerySafe(CACHE_KEYS.tables(outletId), async () => {
-      const { data, error } = await supabase.from('dining_tables').select('*')
-        .eq('outlet_id', outletId).eq('is_active', true).order('sort_order');
-      if (error) throw error;
-      return data || [];
-    }, []),
-    cachedQuerySafe(CACHE_KEYS.areas(outletId), async () => {
-      const { data, error } = await supabase.from('floor_areas').select('*')
-        .eq('outlet_id', outletId).order('sort_order');
-      if (error) throw error;
-      return data || [];
-    }, []),
-  ]);
-
-  let finalTables = tRes.data || [];
-  
-  // FIX: If cache is empty, force a direct fetch to prevent missing tables
-  if (finalTables.length === 0) {
-      console.log('[Tables] Cache empty, forcing direct fetch from Supabase...');
-      const { data: freshData } = await supabase.from('dining_tables').select('*')
-          .eq('outlet_id', outletId).eq('is_active', true).order('sort_order');
-      if (freshData && freshData.length > 0) {
-          finalTables = freshData;
-      }
+  if (!outletId) {
+      console.warn('[Tables] No outletId found, skipping load.');
+      return;
   }
 
-  store.set('tables', finalTables);
-  store.set('areas',  aRes.data || []);
-
+  console.log('[Tables] Fetching directly from Supabase (Cache Bypassed)...');
+  
   try {
-    const { data, error } = await supabase.from('orders')
-      .select('*')
-      .eq('outlet_id', outletId)
-      .in('status', ['open','in_kitchen','partially_ready','ready','served','billed','partially_paid']);
-    if (error) throw error;
-    store.set('openOrders', data || []);
-  } catch (e) {
-    console.warn('[tables] open orders not refreshed (offline?)');
+      const [tRes, aRes] = await Promise.all([
+        supabase.from('dining_tables').select('*').eq('outlet_id', outletId).eq('is_active', true).order('sort_order'),
+        supabase.from('floor_areas').select('*').eq('outlet_id', outletId).order('sort_order')
+      ]);
+
+      if (tRes.error) throw tRes.error;
+      if (aRes.error) throw aRes.error;
+
+      console.log('[Tables] Fetched successfully:', tRes.data.length, 'tables.');
+      store.set('tables', tRes.data || []);
+      store.set('areas',  aRes.data || []);
+      
+      // Also save to cache for next time
+      if (typeof saveSnapshot === 'function') {
+          saveSnapshot(CACHE_KEYS.tables(outletId), { data: tRes.data, at: Date.now() }).catch(() => {});
+          saveSnapshot(CACHE_KEYS.areas(outletId), { data: aRes.data, at: Date.now() }).catch(() => {});
+      }
+  } catch (err) {
+      console.error('[Tables] Direct fetch failed:', err);
   }
 }
 
@@ -307,12 +293,21 @@ function buildCard(table, openOrder, onPickTable) {
                       
                       if (window.store) {
                           window.store.set('tables', window.store.state.tables.filter(t => t.id !== table.id));
-                          // FIX: Clear active table if we are deleting the one currently open
+                          
+                          // Clear active table if we are deleting the one currently open
                           if (window.store.state.cart && window.store.state.cart.tableId === table.id) {
                               window.store.state.cart.tableId = null;
                               window.store.state.cart.orderId = null;
                               window.store.state.cart.items = [];
                               window.dispatchEvent(new CustomEvent('cart:changed'));
+                          }
+                          
+                          // FIX: Instantly update the cache so the deleted table doesn't come back
+                          const outletId = window.store.state.outlet?.id;
+                          if (outletId) {
+                              import('./offline-cache.js').then(({ saveSnapshot, CACHE_KEYS }) => {
+                                  saveSnapshot(CACHE_KEYS.tables(outletId), { data: window.store.state.tables, at: Date.now() }).catch(()=>{});
+                              });
                           }
                       }
                       
