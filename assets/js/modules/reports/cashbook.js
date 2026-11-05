@@ -76,8 +76,10 @@ export async function renderCashbookDetailed() {
     
     // 2b. Process All Outflows (Supplier Payments, Purchases, Expenses)
     const processOutflow = (amt, mode, time, type, desc) => {
-        const safeMode = String(mode || '').toLowerCase();
-        if (safeMode === 'credit' || !safeMode) return; // Strictly ignore credit/unpaid
+        const safeMode = String(mode || '').trim().toLowerCase();
+        
+        // STRICT ALLOW-LIST: Only process if it is EXACTLY cash, upi, or card.
+        if (!['cash', 'upi', 'card'].includes(safeMode)) return;
         
         const safeAmt = Number(amt || 0);
         
@@ -98,20 +100,20 @@ export async function renderCashbookDetailed() {
         }
     };
 
-    // A. Supplier Payments
+    // A. Supplier Payments (Handles manual payments AND auto-payments for POs)
     (supplierPayments || []).forEach(sp => {
         processOutflow(sp.amount, sp.payment_mode || sp.mode, new Date(sp.created_at).getTime(), 'Expense', sp.notes || 'Paid to supplier');
     });
 
-    // B. Quick Purchases
+    // B. Quick Purchases (ONLY if paid. Credit purchases must be ignored)
     (quickPurchases || []).forEach(p => {
+        if (p.status === 'pending' || p.payment_status === 'credit') return; // Skip credit
         processOutflow(p.total, p.payment_mode, new Date(p.created_at).getTime(), 'Purchase', 'Quick Purchase');
     });
 
-    // C. Purchase Orders (POs)
-    (purchaseOrders || []).forEach(p => {
-        processOutflow(p.grand_total, p.payment_mode, new Date(p.created_at).getTime(), 'Purchase', 'PO: ' + (p.po_number || 'N/A'));
-    });
+    // C. Purchase Orders: DO NOT PROCESS HERE! 
+    // If a PO is paid, it is already processed via 'supplier_payments' above.
+    // If a PO is credit, it should not affect the cashbook.
 
     // D. General Expenses
     (expenses || []).forEach(e => {

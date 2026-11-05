@@ -7,20 +7,28 @@ import { saveSnapshot, loadSnapshot } from './offline-db.js';
 // 4. If no cache exists → re-throw the original error.
 
 export async function cachedQuery(key, fetcher, { ttlMs = 0 } = {}) {
+  // 1. Try to load from cache FIRST (Instant Load)
+  const snap = await loadSnapshot(key).catch(() => null);
+  
+  if (snap && snap.data !== undefined) {
+    // FIRE AND FORGET: Fetch fresh data in the background to update cache for next time
+    fetcher().then(fresh => {
+        saveSnapshot(key, { data: fresh, at: Date.now() }).catch(() => {});
+    }).catch(err => {
+        console.warn(`[cache] background update failed for "${key}"`, err?.message || err);
+    });
+    
+    // Return the cached data immediately so the UI loads instantly
+    return { data: snap.data, cached: true, at: snap.at };
+  }
+
+  // 2. If NO cache exists, we must wait for the network
   try {
     const fresh = await fetcher();
-    // Save asynchronously so we don't slow down the caller
     saveSnapshot(key, { data: fresh, at: Date.now() }).catch(() => {});
     return { data: fresh, cached: false, at: Date.now() };
   } catch (err) {
-    console.warn(`[cache] network failed for "${key}", trying snapshot`, err?.message || err);
-    const snap = await loadSnapshot(key).catch(() => null);
-    if (snap && snap.data !== undefined) {
-      if (ttlMs > 0 && Date.now() - snap.at > ttlMs) {
-        console.warn(`[cache] snapshot for "${key}" is stale (${Date.now() - snap.at}ms old)`);
-      }
-      return { data: snap.data, cached: true, at: snap.at };
-    }
+    console.warn(`[cache] network failed and no cache exists for "${key}"`, err?.message || err);
     throw err;
   }
 }
