@@ -821,71 +821,57 @@ function openEditKOTModal(kot, currentOrder, currentTableName, priceMap, onSave)
             // 1. Process Voids
             const voidedItems = kotItems.filter(i => i.status === 'void' && !i.is_new);
             for (const item of voidedItems) {
-                await supabase.from('order_items').update({ status: 'void', notes: item.void_reason }).eq('id', item.order_item_id);
-                await supabase.from('kot_items').update({ status: 'cancelled', notes: item.void_reason }).eq('id', item.id);
+                await supabase.from('order_items').update({ status: 'void', notes: item.void_reason }).eq('id', item.id);
             }
 
             // 2. Process Updates (Quantity changes)
             const updatedItems = kotItems.filter(i => i.status !== 'void' && !i.is_new && Number(i.quantity) !== i.original_qty);
             for (const item of updatedItems) {
-                await supabase.from('order_items').update({ quantity: Number(item.quantity), line_total: Number(item.quantity) * item.unit_price }).eq('id', item.order_item_id);
-                await supabase.from('kot_items').update({ quantity: Number(item.quantity) }).eq('id', item.id);
+                await supabase.from('order_items').update({ quantity: Number(item.quantity) }).eq('id', item.id);
             }
 
             // 3. Process New Items
             const newItems = kotItems.filter(i => i.is_new && i.status !== 'void');
             for (const item of newItems) {
-                const { data: newOrderItem } = await supabase.from('order_items').insert({
+                const { error: insErr } = await supabase.from('order_items').insert({
+                    id: crypto.randomUUID(),
                     tenant_id: window.store.state.tenant.id,
                     outlet_id: window.store.state.outlet.id,
                     order_id: currentOrder.id,
-                    item_id: item.item_id,
+                    menu_item_id: item.item_id, // Fixed column name from item_id
                     name_snapshot: item.name_snapshot,
                     quantity: Number(item.quantity),
                     unit_price: item.unit_price,
-                    line_total: Number(item.quantity) * item.unit_price,
-                    status: 'pending'
-                }).select().single();
-
-                if (newOrderItem) {
-                    await supabase.from('kot_items').insert({
-                        tenant_id: window.store.state.tenant.id,
-                        kot_id: kot.id,
-                        order_item_id: newOrderItem.id,
-                        name_snapshot: item.name_snapshot,
-                        quantity: Number(item.quantity),
-                        status: 'pending'
-                    });
-                }
+                    status: 'sent_to_kitchen'
+                });
+                if (insErr) throw insErr;
             }
 
-            // 4. Recalculate Order Totals
-            await supabase.rpc('recalc_order', { order_id: currentOrder.id });
+            // 4. Recalculate Order Totals manually (Fixes missing recalc_order 404)
+            const { data: allItems } = await supabase.from('order_items').select('*').eq('order_id', currentOrder.id).neq('status', 'void');
+            const newTotal = (allItems || []).reduce((sum, it) => sum + (Number(it.quantity) * Number(it.unit_price)), 0);
+            
+            await supabase.from('orders').update({
+                subtotal: newTotal,
+                gross_total: newTotal
+            }).eq('id', currentOrder.id);
 
             // 5. Refresh POS Cart if this order is active
             if (window.store && window.store.state.cart && window.store.state.cart.orderId === currentOrder.id) {
-                const { data: freshItems } = await supabase.from('order_items').select('*').eq('order_id', currentOrder.id).neq('status', 'void');
-                const { data: freshOrder } = await supabase.from('orders').select('*').eq('id', currentOrder.id).single();
+                const cartItems = (allItems || []).map(it => ({
+                    id: crypto.randomUUID(),
+                    _saved: true,
+                    _dbId: it.id,
+                    menuItemId: it.menu_item_id,
+                    name: it.name_snapshot,
+                    qty: Number(it.quantity),
+                    unitPrice: Number(it.unit_price),
+                    taxRate: Number(it.tax_rate || 0)
+                }));
 
-                if (freshItems && freshOrder) {
-                    const cartItems = freshItems.map(it => ({
-                        menu_item_id: it.item_id,
-                        item_id: it.item_id,
-                        name: it.name_snapshot,
-                        price: Number(it.unit_price),
-                        qty: Number(it.quantity),
-                        tax_rate: Number(it.tax_rate || 0)
-                    }));
-
-                    window.store.patch('cart', { items: cartItems });
-                    
-                    // Update grand total from the recalculated order
-                    window.store.patch('cart', {
-                        totals: { ...window.store.state.cart.totals, grand: Number(freshOrder.grand_total) }
-                    });
-
-                    window.dispatchEvent(new CustomEvent('cart:changed'));
-                }
+                window.store.state.cart.items = cartItems;
+                window.store.state.cart.totals.grand = newTotal;
+                window.dispatchEvent(new CustomEvent('cart:changed'));
             }
 
             if (window.toast) window.toast('KOT Updated successfully', 'success');
