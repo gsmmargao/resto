@@ -298,6 +298,8 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
     amount: grandWithTip,
     tendered: grandWithTip,
     reference: '',
+    splitCash: 0,
+    splitUpi: 0,
     customer: { ...customer } // Copy customer object so we can mutate it
   };
 
@@ -327,13 +329,14 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
   const body = el('div', { class: 'p-5 space-y-4 overflow-y-auto' });
   
   // Mode Tabs
-  const tabs = el('div', { class: 'grid grid-cols-5 gap-1' });
+  const tabs = el('div', { class: 'grid grid-cols-3 gap-1' });
   const modes = [
     { id: 'cash', label: '💵 Cash' },
     { id: 'card', label: '💳 Card' },
     { id: 'upi', label: '📱 UPI' },
     { id: 'credit', label: '📝 Credit' },
-    { id: 'no_charge', label: '🚫 No' }
+    { id: 'no_charge', label: '🚫 No' },
+    { id: 'split', label: '✂️ Split' }
   ];
 
   const renderTabs = () => {
@@ -360,6 +363,42 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
 
   const renderInputs = () => {
     inputsBox.innerHTML = '';
+    
+    if (state.mode === 'split') {
+        inputsBox.appendChild(el('div', { class: 'space-y-3' }, [
+            el('div', {}, [
+                el('label', { class: 'block text-xs font-semibold text-slate-600 mb-1' }, 'Cash Amount (₹)'),
+                el('input', { 
+                    type: 'number', 
+                    id: 'split-cash',
+                    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 font-bold', 
+                    value: (state.splitCash || 0),
+                    oninput: (e) => { 
+                        state.splitCash = Number(e.target.value) || 0; 
+                        const remaining = Math.max(0, grandWithTip - state.splitCash);
+                        document.getElementById('split-upi').value = remaining.toFixed(2);
+                        state.splitUpi = remaining;
+                    }
+                })
+            ]),
+            el('div', {}, [
+                el('label', { class: 'block text-xs font-semibold text-slate-600 mb-1' }, 'UPI / Card Amount (₹)'),
+                el('input', { 
+                    type: 'number', 
+                    id: 'split-upi',
+                    class: 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 font-bold', 
+                    value: (state.splitUpi || grandWithTip).toFixed(2),
+                    oninput: (e) => { 
+                        state.splitUpi = Number(e.target.value) || 0; 
+                        const remaining = Math.max(0, grandWithTip - state.splitUpi);
+                        document.getElementById('split-cash').value = remaining.toFixed(2);
+                        state.splitCash = remaining;
+                    }
+                })
+            ])
+        ]));
+        return;
+    }
     
     if (state.mode === 'credit') {
       // Show existing customer or create new
@@ -495,12 +534,24 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
         btn.disabled = true; btn.textContent = 'Processing…';
         
         try {
-          const payments = [{
-            mode: state.mode,
-            amount: grandWithTip,
-            tendered: state.mode === 'cash' ? state.tendered : null,
-            reference: state.reference
-          }];
+          let payments = [];
+          
+          if (state.mode === 'split') {
+              if (state.splitCash > 0) {
+                  payments.push({ mode: 'cash', amount: state.splitCash, tendered: state.splitCash, reference: 'Split - Cash' });
+              }
+              if (state.splitUpi > 0) {
+                  payments.push({ mode: 'upi', amount: state.splitUpi, tendered: state.splitUpi, reference: 'Split - UPI' });
+              }
+              if (payments.length === 0) throw new Error('Split amounts cannot be zero');
+          } else {
+              payments = [{
+                mode: state.mode,
+                amount: grandWithTip,
+                tendered: state.mode === 'cash' ? state.tendered : null,
+                reference: state.reference
+              }];
+          }
 
           // 1. Process the payment (saves invoice, records payments, clears cart, navigates)
           await completePayment(orderId, totals, state.customer, payments, tipAmount);
