@@ -52,6 +52,16 @@ async function loadAll() {
 }
 
 export async function renderSuppliersView(root) {
+  // ROOT CAUSE FIX: Unlock body scroll and force the main container to be scrollable
+  document.body.style.overflow = 'auto';
+  document.body.style.overflowY = 'auto';
+  document.body.style.position = 'static';
+  document.documentElement.style.overflow = 'auto';
+  
+  root.style.overflowY = 'auto';
+  root.style.height = '100%';
+  root.style.paddingBottom = '4rem'; // Add space at the bottom so the last item isn't cut off
+
   if (!state.loaded) {
     root.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Suppliers...</div>';
     await loadAll();
@@ -238,8 +248,40 @@ function openSupplierEditor(root, supplier) {
   card.appendChild(field('Contact Number', phoneIn));
   card.appendChild(field('Credit Terms (Days)', creditIn));
 
-  const footer = el('div', { class: 'grid grid-cols-2 gap-2 pt-2' },[
-    el('button', { class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', onclick: () => overlay.remove() }, 'Cancel'),
+  const closeModal = () => {
+      overlay.remove();
+      document.body.style.overflow = 'auto'; // FORCE UNLOCK SCROLL
+  };
+
+  const isAdmin = ['admin', 'owner', 'super-admin'].includes(store.state.member?.role);
+  const showDelete = !isNew && isAdmin;
+
+  const footer = el('div', { class: `grid ${showDelete ? 'grid-cols-3' : 'grid-cols-2'} gap-2 pt-2` },[
+    showDelete ? el('button', { 
+      class: 'py-2.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-semibold text-sm transition',
+      onclick: async (e) => {
+        if (!confirm('Are you sure you want to delete this supplier? This cannot be undone.')) return;
+        const btn = e.currentTarget;
+        btn.disabled = true; btn.textContent = 'Deleting…';
+        try {
+          const { error } = await supabase.from('suppliers').delete().eq('id', supplier.id);
+          if (error) throw error;
+          toast('Supplier deleted', 'success');
+          closeModal();
+          await loadAll();
+          paint(root);
+        } catch (err) {
+          toast('Failed: ' + err.message, 'error');
+          btn.disabled = false; btn.textContent = 'Delete';
+        }
+      }
+    }, 'Delete') : null,
+    
+    el('button', { 
+      class: 'py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm', 
+      onclick: closeModal 
+    }, 'Cancel'),
+    
     el('button', {
       class: 'py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm',
       onclick: async (e) => {
@@ -259,7 +301,7 @@ function openSupplierEditor(root, supplier) {
             if (error) throw error;
           }
           toast('Saved', 'success');
-          overlay.remove();
+          closeModal();
           await loadAll();
           paint(root);
         } catch (err) {
@@ -268,7 +310,7 @@ function openSupplierEditor(root, supplier) {
         }
       },
     }, isNew ? 'Create' : 'Save'),
-  ]);
+  ].filter(Boolean));
   card.appendChild(footer);
 
   overlay.appendChild(card);
@@ -277,6 +319,8 @@ function openSupplierEditor(root, supplier) {
 }
 
 function openLedgerModal(root, supplier) {
+  const closeLedgerModal = () => { overlay.remove(); document.body.style.overflow = 'auto'; };
+  const isAdmin = ['admin', 'owner', 'super-admin'].includes(store.state.member?.role);
   const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
   const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden' });
 
@@ -296,7 +340,11 @@ function openLedgerModal(root, supplier) {
     </div>
     <button class="text-slate-400 hover:text-slate-700 text-3xl leading-none focus:outline-none" id="close-ledger">&times;</button>
   `;
-  header.querySelector('#close-ledger').onclick = () => overlay.remove();
+  const closeModal = () => {
+      overlay.remove();
+      document.body.style.overflow = 'auto'; // Force unlock scroll
+  };
+  header.querySelector('#close-ledger').onclick = closeModal;
   card.appendChild(header);
 
   const body = el('div', { class: 'flex-1 overflow-y-auto p-6 bg-white' });
@@ -311,6 +359,7 @@ function openLedgerModal(root, supplier) {
           <th class="text-left px-4 py-2 font-medium">Date</th>
           <th class="text-left px-4 py-2 font-medium">Description</th>
           <th class="text-right px-4 py-2 font-medium">Amount</th>
+          ${isAdmin ? '<th class="text-center px-4 py-2 font-medium">Action</th>' : ''}
         </tr>
       </thead>
       <tbody>
@@ -319,8 +368,13 @@ function openLedgerModal(root, supplier) {
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
             <td class="px-4 py-3 text-sm text-slate-700">${p.notes || 'Purchase Bill'}</td>
             <td class="px-4 py-3 text-sm text-right font-medium text-red-600">+₹${Number(p.grand_total || p.total || 0).toFixed(2)}</td>
+            ${isAdmin ? `<td class="px-4 py-3 text-center">
+                <button class="btn-del-purchase text-red-500 hover:text-red-700 transition" data-id="${p.id}" title="Delete Purchase">
+                    <svg class="w-4 h-4 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+            </td>` : ''}
           </tr>
-        `).join('') : '<tr><td colspan="3" class="text-center py-8 text-slate-400 text-sm">No credit purchases</td></tr>'}
+        `).join('') : '<tr><td colspan="${isAdmin ? 4 : 3}" class="text-center py-8 text-slate-400 text-sm">No credit purchases</td></tr>'}
       </tbody>
     </table>
   `;
@@ -353,14 +407,46 @@ function openLedgerModal(root, supplier) {
   body.appendChild(grid);
   card.appendChild(body);
 
+  
+  if (isAdmin) {
+      card.querySelectorAll('.btn-del-purchase').forEach(btn => {
+          btn.onclick = async (e) => {
+              if (!confirm('Delete this purchase? This will recalculate the balance.')) return;
+              const id = e.currentTarget.getAttribute('data-id');
+              // Try deleting from purchase_orders, then purchases
+              await supabase.from('purchase_orders').delete().eq('id', id);
+              await supabase.from('purchases').delete().eq('id', id);
+              toast('Purchase deleted', 'success');
+              closeLedgerModal();
+              await loadAll();
+              paint(root);
+          };
+      });
+
+      card.querySelectorAll('.btn-del-payment').forEach(btn => {
+          btn.onclick = async (e) => {
+              if (!confirm('Delete this payment? This will recalculate the balance.')) return;
+              const id = e.currentTarget.getAttribute('data-id');
+              await supabase.from('supplier_payments').delete().eq('id', id);
+              toast('Payment deleted', 'success');
+              closeLedgerModal();
+              await loadAll();
+              paint(root);
+          };
+      });
+  }
+
   const footer = el('div', { class: 'p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3 shrink-0' });
   footer.innerHTML = `
+    
     <button id="btn-rec-purchase" class="px-5 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm shadow-sm transition">Record Purchase</button>
     <button id="btn-rec-payment" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm shadow-sm transition">Record Payment</button>
   `;
   
-  footer.querySelector('#btn-rec-purchase').onclick = () => { overlay.remove(); openPurchaseModal(root, supplier.id); };
-  footer.querySelector('#btn-rec-payment').onclick = () => { overlay.remove(); openPaymentModal(root, supplier.id, balance); };
+  footer.querySelector('#btn-rec-purchase').onclick = () => { closeLedgerModal(); openPurchaseModal(root, supplier.id); };
+  footer.querySelector('#btn-rec-payment').onclick = () => { closeLedgerModal(); openPaymentModal(root, supplier.id, balance); };
+  
+  
   
   card.appendChild(footer);
   overlay.appendChild(card);
