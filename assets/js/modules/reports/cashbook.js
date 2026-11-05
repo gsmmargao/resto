@@ -234,7 +234,7 @@ export async function renderCashbookDetailed() {
     // Attach safe click listeners for Person Ledger
     wrapper.querySelectorAll(".ledger-row").forEach(tr => {
         tr.addEventListener("click", () => {
-            openPersonLedgerModal(tr.dataset.name, cashMovements);
+            window.openPersonLedger(tr.dataset.name, personLedger, cashMovements);
         });
     });
 
@@ -292,46 +292,64 @@ export async function renderCashbookDetailed() {
 
     // Global function for opening the person ledger
     window.openPersonLedger = (personName, personLedger, cashMovements) => {
-        const movements = cashMovements.filter(m => m.person_name === personName);
-        const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
-        const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] flex flex-col' });
+        // Strictly filter movements for THIS person only
+        const movements = cashMovements.filter(m => m.person_name && m.person_name.trim().toLowerCase() === personName.trim().toLowerCase());
         
-        const totalHeld = personLedger.find(p => p[0] === personName)?.[1] || 0;
+        // Calculate total held mathematically from the actual movements
+        let calculatedTotal = 0;
+        movements.forEach(m => {
+            if (m.movement_type === 'cash_out') calculatedTotal += Number(m.amount || 0);
+            if (m.movement_type === 'cash_in') calculatedTotal -= Number(m.amount || 0);
+        });
 
+        const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+        // Increased max-w to 2xl for a wider ledger view
+        const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6 space-y-4 max-h-[85vh] flex flex-col' });
+        
         card.appendChild(el('div', { class: 'flex justify-between items-center border-b pb-3 shrink-0' }, [
             el('div', {}, [
                 el('h3', { class: 'font-bold text-lg text-slate-800' }, `${personName}'s Cash Ledger`),
-                el('div', { class: 'text-sm text-slate-500 mt-1' }, 'Total Cash Held: ', el('span', { class: 'font-bold text-indigo-600' }, fmtMoney(totalHeld)))
+                el('div', { class: 'text-sm text-slate-500 mt-1' }, 'Total Cash Held: ', el('span', { class: 'font-bold text-indigo-600 text-lg ml-1' }, fmtMoney(calculatedTotal)))
             ]),
             el('button', { class: 'text-slate-400 hover:text-slate-800 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
         ]));
 
-        const tableWrap = el('div', { class: 'overflow-y-auto flex-1' });
+        const tableWrap = el('div', { class: 'overflow-y-auto flex-1 border rounded-lg' });
         const table = el('table', { class: 'w-full text-left' }, [
-            el('thead', { class: 'bg-slate-50 text-[10px] uppercase text-slate-500 sticky top-0' }, [
+            el('thead', { class: 'bg-slate-100 text-[10px] uppercase text-slate-600 sticky top-0 shadow-sm' }, [
                 el('tr', {}, [
-                    el('th', { class: 'p-3' }, 'Date & Time'),
-                    el('th', { class: 'p-3' }, 'Type'),
+                    el('th', { class: 'p-3 w-32' }, 'Date'),
                     el('th', { class: 'p-3' }, 'Reason'),
-                    el('th', { class: 'p-3 text-right' }, 'Amount')
+                    el('th', { class: 'p-3 text-right text-red-600 w-32' }, 'Debit (Cash Taken)'),
+                    el('th', { class: 'p-3 text-right text-emerald-600 w-32' }, 'Credit (Returned)')
                 ])
             ]),
             el('tbody', {}, movements.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).map(m => {
                 const isOut = m.movement_type === 'cash_out';
+                const dateStr = new Date(m.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
+                const amountStr = Number(m.amount || 0).toFixed(2);
+                
                 return el('tr', { class: 'border-b border-slate-100 text-sm hover:bg-slate-50' }, [
-                    el('td', { class: 'p-3 text-slate-600 whitespace-nowrap' }, new Date(m.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })),
-                    el('td', { class: `p-3 font-semibold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, isOut ? 'Cash Taken' : 'Cash Returned'),
-                    el('td', { class: 'p-3 text-slate-500' }, m.reason || '—'),
-                    el('td', { class: `p-3 text-right font-bold ${isOut ? 'text-red-600' : 'text-emerald-600'}` }, `${isOut ? '-' : '+'}₹${Number(m.amount).toFixed(2)}`)
+                    el('td', { class: 'p-3 text-slate-600 whitespace-nowrap' }, dateStr),
+                    el('td', { class: 'p-3 text-slate-700' }, m.reason || '—'),
+                    el('td', { class: 'p-3 text-right font-bold text-red-600' }, isOut ? `₹${amountStr}` : ''),
+                    el('td', { class: 'p-3 text-right font-bold text-emerald-600' }, !isOut ? `₹${amountStr}` : '')
                 ]);
-            }))
+            })),
+            el('tfoot', { class: 'bg-slate-50 border-t-2 border-slate-300' }, [
+                el('tr', {}, [
+                    el('td', { colspan: 2, class: 'p-3 font-bold text-slate-800 text-right' }, 'Net Balance:'),
+                    el('td', { colspan: 2, class: 'p-3 font-black text-indigo-700 text-right text-lg' }, fmtMoney(calculatedTotal))
+                ])
+            ])
         ]);
+        
         tableWrap.appendChild(table);
         card.appendChild(tableWrap);
         card.appendChild(el('button', { class: 'w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium mt-2 shrink-0', onclick: () => overlay.remove() }, 'Close'));
         overlay.appendChild(card);
         document.body.appendChild(overlay);
-    };
+    };;;
 
   } catch (err) {
     console.error(err);
