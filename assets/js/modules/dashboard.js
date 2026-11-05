@@ -12,7 +12,7 @@ let realtimeChannel = null;
 
 export async function renderDashboard(root, skipFetch = false) {
   root.innerHTML = '';
-  if (!skipFetch) {
+  if (skipFetch !== true) { // Fix: Router passes params object, ensure we only skip on explicit true
       if (!skipFetch) {
       try {
         // Fetch in parallel for superfast loading
@@ -233,10 +233,11 @@ function renderPOS(root) {
 
 
 window.addEventListener('floorplan:reload', async () => {
-    const root = document.getElementById('app-view');
-    if (root && (window.location.hash === '#dashboard' || window.location.hash === '' || window.location.hash.includes('dashboard'))) {
-        // FIX: Re-render the ENTIRE dashboard to prevent the top nav from disappearing
-        await renderDashboard(root, true);
+    // SAFE FIX: Only redraw the tables container, never wipe the whole dashboard
+    const content = document.getElementById('dashboard-content');
+    if (content && typeof renderTables === 'function') {
+        await refreshOpenOrders(); // Refresh data locally
+        renderTables(content);
     }
 });
 
