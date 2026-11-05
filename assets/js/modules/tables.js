@@ -136,15 +136,24 @@ function buildCard(table, openOrder, onPickTable) {
               btn.innerHTML = '<div class="text-center font-bold mt-8 animate-pulse">Creating...</div>';
               
               try {
-                  // 1. Generate Daily Sequence
-                  const today = new Date().toISOString().split('T')[0];
-                  let seq = parseInt(localStorage.getItem('takeaway_seq') || '0');
-                  if (localStorage.getItem('takeaway_date') !== today) {
-                      seq = 0;
-                      localStorage.setItem('takeaway_date', today);
-                  }
-                  seq++;
-                  localStorage.setItem('takeaway_seq', seq);
+                  // 1. Generate Daily Sequence FROM DATABASE (100% reliable)
+                  const todayStart = new Date();
+                  todayStart.setHours(0,0,0,0);
+                  const { data: todayTakeaways } = await supabase
+                      .from('dining_tables')
+                      .select('name')
+                      .eq('is_takeaway', true)
+                      .gte('created_at', todayStart.toISOString());
+                  
+                  let maxSeq = 0;
+                  (todayTakeaways || []).forEach(t => {
+                      const match = t.name.match(/Take-away\s*(\d+)/i);
+                      if (match) {
+                          const num = parseInt(match[1], 10);
+                          if (num > maxSeq) maxSeq = num;
+                      }
+                  });
+                  const seq = maxSeq + 1;
                   const name = 'Take-away ' + seq;
 
                   const m1Data = window.store.state.tables.find(t => t.name === 'M1');
@@ -286,10 +295,16 @@ function buildCard(table, openOrder, onPickTable) {
                       
                       if (window.store) {
                           window.store.set('tables', window.store.state.tables.filter(t => t.id !== table.id));
+                          // FIX: Clear active table if we are deleting the one currently open
+                          if (window.store.state.cart && window.store.state.cart.tableId === table.id) {
+                              window.store.state.cart.tableId = null;
+                              window.store.state.cart.orderId = null;
+                              window.store.state.cart.items = [];
+                              window.dispatchEvent(new CustomEvent('cart:changed'));
+                          }
                       }
                       
                       overlay.remove();
-                      // Force instant UI update without page refresh
                       window.dispatchEvent(new CustomEvent('floorplan:reload'));
                   } }, 'Delete')
               ])

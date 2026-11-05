@@ -10,13 +10,17 @@ import { navigate } from '../router.js';
 
 let realtimeChannel = null;
 
-export async function renderDashboard(root) {
+export async function renderDashboard(root, skipFetch = false) {
   root.innerHTML = '';
-  try {
-    // Fetch in parallel for superfast loading
-    await Promise.all([loadTables(), refreshOpenOrders()]);
-  } catch (e) {
-    console.error("Failed to load data", e);
+  if (!skipFetch) {
+      if (!skipFetch) {
+      try {
+        // Fetch in parallel for superfast loading
+        await Promise.all([loadTables(), refreshOpenOrders()]);
+      } catch (e) {
+        console.error("Failed to load data", e);
+      }
+    }
   }
 
   const wrapper = el('div', { class: 'h-full flex flex-col' });
@@ -70,6 +74,38 @@ export async function renderDashboard(root) {
     loadTables().then(() => { if (current === 'tables') renderTables(content); });
     refreshOpenOrders().then(() => { if (current === 'orders') renderOrders(content); });
   });
+
+  // AUTO-DELETE EMPTY TAKEAWAYS (5 Minute Grace Period)
+  setInterval(async () => {
+      const now = new Date();
+      const tables = window.store.state.tables || [];
+      const openOrders = window.store.state.openOrders || [];
+
+      const emptyTakeaways = tables.filter(t => {
+          if (!t.is_takeaway) return false;
+          if (openOrders.some(o => o.table_id === t.id)) return false;
+          if (!t.created_at) return false;
+          const ageInMinutes = (now - new Date(t.created_at)) / 1000 / 60;
+          return ageInMinutes > 5; // 5 minutes
+      });
+
+      if (emptyTakeaways.length > 0) {
+          console.log(`[Cleanup] Auto-deleting ${emptyTakeaways.length} empty takeaways...`);
+          for (const t of emptyTakeaways) {
+              await supabase.from('dining_tables').delete().eq('id', t.id);
+              // If the deleted table is currently active in the cart, clear it
+              if (window.store.state.cart && window.store.state.cart.tableId === t.id) {
+                  window.store.state.cart.tableId = null;
+                  window.store.state.cart.orderId = null;
+                  window.store.state.cart.items = [];
+                  window.dispatchEvent(new CustomEvent('cart:changed'));
+              }
+          }
+          await loadTables();
+          const root = document.getElementById('app-view');
+          if (root && typeof renderTables === 'function') renderTables(root);
+      }
+  }, 15000); // Check every 15 seconds
 }
 
 async function refreshOpenOrders() {
@@ -196,11 +232,11 @@ function renderPOS(root) {
 }
 
 
-window.addEventListener('floorplan:reload', () => {
-    const root = document.getElementById('app-content') || document.querySelector('.content-wrapper') || document.body;
-    // Re-render tables view
-    if (typeof renderTables === 'function') {
-        renderTables(root);
+window.addEventListener('floorplan:reload', async () => {
+    const root = document.getElementById('app-view');
+    if (root && (window.location.hash === '#dashboard' || window.location.hash === '' || window.location.hash.includes('dashboard'))) {
+        // FIX: Re-render the ENTIRE dashboard to prevent the top nav from disappearing
+        await renderDashboard(root, true);
     }
 });
 
