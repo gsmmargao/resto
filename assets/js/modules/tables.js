@@ -131,6 +131,8 @@ function buildCard(table, openOrder, onPickTable) {
               e.preventDefault();
               e.stopPropagation();
               const btn = e.currentTarget;
+              if (btn.disabled) return;
+              btn.disabled = true;
               btn.innerHTML = '<div class="text-center font-bold mt-8 animate-pulse">Creating...</div>';
               
               try {
@@ -149,7 +151,8 @@ function buildCard(table, openOrder, onPickTable) {
 
                   // 2. Insert REAL table in DB to satisfy router
                   const { data: newTable, error } = await supabase.from('dining_tables').insert([{
-                      name: name + ' - ' + new Date().toLocaleDateString('en-GB').replace(/\//g, ''),
+                      created_at: new Date().toISOString(),
+                      name: name + ' - ' + new Date().toLocaleDateString('en-GB').replace(/\//g, '') + '-' + Math.random().toString(36).substring(2, 6).toUpperCase(),
                       capacity: 1,
                       status: 'occupied',
                       tenant_id: window.store.state.tenant.id,
@@ -239,7 +242,7 @@ function buildCard(table, openOrder, onPickTable) {
               el('span', { class: 'text-xs uppercase opacity-90 font-medium' }, `1 pax`),
           ]),
           openOrder ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
-              el('div', { class: 'truncate font-semibold' }, `#${openOrder.order_number} ${openOrder.customer_name_snapshot ? '• ' + openOrder.customer_name_snapshot : ''}`),
+              el('div', { class: 'truncate font-semibold' }, openOrder.customer_name_snapshot ? `${openOrder.customer_name_snapshot} ${openOrder.customer_phone_snapshot ? '• ' + openOrder.customer_phone_snapshot : ''}` : 'Walk-in'),
               el('div', { class: 'flex justify-between' }, [
                   el('span', {}, fmtMoney(openOrder.gross_total || openOrder.subtotal || openOrder.grand_total || 0)),
                   el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
@@ -267,12 +270,32 @@ function buildCard(table, openOrder, onPickTable) {
     onclick: async () => {
       // If it's a Takeaway and there's no active order (empty table)
       if (isTakeaway && !openOrder) {
-          if (confirm(`This Take-away is empty. Do you want to delete it from the floor plan?`)) {
-              await supabase.from('dining_tables').delete().eq('id', table.id);
-              if (window.store) {
-                  window.store.set('tables', window.store.state.tables.filter(t => t.id !== table.id));
-              }
-          }
+          // CUSTOM UI MODAL
+          const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+          const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 text-center space-y-4' }, [
+              el('div', { class: 'text-lg font-bold text-slate-800' }, 'Delete Empty Takeaway?'),
+              el('p', { class: 'text-slate-600 text-sm' }, 'This Take-away is empty. Do you want to delete it from the floor plan?'),
+              el('div', { class: 'flex gap-2 justify-center mt-2' }, [
+                  el('button', { class: 'px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm transition', onclick: () => overlay.remove() }, 'Cancel'),
+                  el('button', { class: 'px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-sm shadow-sm transition', onclick: async (e) => {
+                      const btn = e.currentTarget;
+                      btn.disabled = true;
+                      btn.textContent = 'Deleting...';
+                      
+                      await supabase.from('dining_tables').delete().eq('id', table.id);
+                      
+                      if (window.store) {
+                          window.store.set('tables', window.store.state.tables.filter(t => t.id !== table.id));
+                      }
+                      
+                      overlay.remove();
+                      // Force instant UI update without page refresh
+                      window.dispatchEvent(new CustomEvent('floorplan:reload'));
+                  } }, 'Delete')
+              ])
+          ]);
+          overlay.appendChild(card);
+          document.body.appendChild(overlay);
           return;
       }
       // --- Force the cart to match the table type ---
@@ -291,7 +314,7 @@ function buildCard(table, openOrder, onPickTable) {
     ]),
     openOrder
       ? el('div', { class: 'text-sm space-y-1 opacity-95 font-medium' }, [
-          el('div', { class: 'truncate font-semibold' }, `#${openOrder.order_number} ${openOrder.customer_name_snapshot ? '• ' + openOrder.customer_name_snapshot : ''}`),
+          el('div', { class: 'truncate font-semibold' }, openOrder.customer_name_snapshot ? `${openOrder.customer_name_snapshot} ${openOrder.customer_phone_snapshot ? '• ' + openOrder.customer_phone_snapshot : ''}` : 'Walk-in'),
           el('div', { class: 'flex justify-between' }, [
             el('span', {}, fmtMoney(openOrder.gross_total || openOrder.subtotal || openOrder.grand_total || 0)),
             el('span', { class: 'live-timer', 'data-ts': openOrder.placed_at }, fmtRelative(openOrder.placed_at)),
@@ -902,17 +925,24 @@ function openSelectCustomerModal(order, tableName) {
         </div>
         
         <div class="p-5 space-y-4">
-            <!-- Search Existing -->
-            <div>
-                <select id="existing-cust-select" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="">-- Search existing customer --</option>
-                </select>
+            <!-- Current Customer & Search Existing -->
+            ${order.customer_name_snapshot ? `
+            <div class="bg-indigo-50 border border-indigo-100 p-3 rounded-lg mb-4 shadow-sm">
+                <div class="text-[10px] text-indigo-600 font-bold uppercase tracking-wider mb-1">Current Customer</div>
+                <div class="font-bold text-slate-800 text-sm">${order.customer_name_snapshot}</div>
+                <div class="text-xs text-slate-600">${order.customer_phone_snapshot || 'No phone'}</div>
+            </div>
+            ` : ''}
+
+            <div class="relative mb-4">
+                <label class="block text-xs font-semibold text-slate-600 mb-1">Search Existing Customer</label>
+                <input type="text" id="existing-cust-search" placeholder="Type name or phone..." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500" autocomplete="off">
+                <div id="existing-cust-results" class="hidden absolute w-full mt-1 bg-white border border-slate-300 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50"></div>
             </div>
             
             <div class="flex justify-end">
-                <button id="btn-save-existing" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition">Save Selection</button>
+                <button id="btn-save-existing" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg transition opacity-50 cursor-not-allowed" disabled>Save Selection</button>
             </div>
-
             <hr class="border-slate-200">
 
             <!-- New Customer -->
@@ -933,11 +963,16 @@ function openSelectCustomerModal(order, tableName) {
     overlay.appendChild(card);
     document.body.appendChild(overlay);
 
-    const selectEl = card.querySelector('#existing-cust-select');
+    const searchIn = card.querySelector('#existing-cust-search');
+    const resultsEl = card.querySelector('#existing-cust-results');
+    const saveBtn = card.querySelector('#btn-save-existing');
     const nameIn = card.querySelector('#new-cust-name');
     const phoneIn = card.querySelector('#new-cust-phone');
 
     card.querySelector('#close-cust-modal').onclick = () => overlay.remove();
+
+    let customerData = [];
+    let selectedCustId = null;
 
     // Fetch existing customers
     (async () => {
@@ -947,14 +982,45 @@ function openSelectCustomerModal(order, tableName) {
             .order('name');
         
         if (customers) {
-            customers.forEach(c => {
-                const opt = document.createElement('option');
-                opt.value = c.id;
-                opt.textContent = `${c.name} (${c.phone || 'No phone'})`;
-                selectEl.appendChild(opt);
-            });
+            customerData = customers;
         }
     })();
+
+    const renderCustResults = (query) => {
+        const q = query.toLowerCase();
+        const filtered = customerData.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q)));
+        
+        if (filtered.length === 0) {
+            resultsEl.innerHTML = '<div class="p-3 text-sm text-slate-500 text-center">No customers found</div>';
+        } else {
+            resultsEl.innerHTML = filtered.map(c => `
+                <div class="p-3 text-sm hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-0 cust-result-item" data-id="${c.id}" data-name="${c.name}" data-phone="${c.phone || ''}">
+                    <div class="font-bold text-slate-800">${c.name}</div>
+                    <div class="text-xs text-slate-500">${c.phone || 'No phone'}</div>
+                </div>
+            `).join('');
+        }
+        resultsEl.classList.remove('hidden');
+
+        resultsEl.querySelectorAll('.cust-result-item').forEach(item => {
+            item.onclick = () => {
+                searchIn.value = item.dataset.name + (item.dataset.phone ? ` (${item.dataset.phone})` : '');
+                selectedCustId = item.dataset.id;
+                resultsEl.classList.add('hidden');
+                saveBtn.disabled = false;
+                saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        });
+    };
+
+    searchIn.oninput = (e) => renderCustResults(e.target.value.trim());
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!searchIn.contains(e.target) && !resultsEl.contains(e.target)) {
+            resultsEl.classList.add('hidden');
+        }
+    });
 
     // Helper to update the order
     async function updateOrderCustomer(customerId, customerName, customerPhone) {
@@ -988,17 +1054,14 @@ function openSelectCustomerModal(order, tableName) {
     }
 
     // Save Existing
-    card.querySelector('#btn-save-existing').onclick = async () => {
-        const selectedId = selectEl.value;
-        if (!selectedId) {
-            if (window.toast) window.toast('Please select a customer', 'warn');
-            return;
-        }
-        const selectedOption = selectEl.options[selectEl.selectedIndex];
-        const name = selectedOption.textContent.split(' (')[0];
-        const phone = selectedOption.textContent.includes('(') ? selectedOption.textContent.split('(')[1].replace(')', '') : null;
+    saveBtn.onclick = async () => {
+        if (!selectedCustId) return;
+        const cust = customerData.find(c => c.id === selectedCustId);
+        if (!cust) return;
         
-        await updateOrderCustomer(selectedId, name, phone);
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+        await updateOrderCustomer(cust.id, cust.name, cust.phone);
     };
 
     // Create New

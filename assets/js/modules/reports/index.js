@@ -323,9 +323,32 @@ export async function renderItemMix() {
   }));
 
   const wrap = el('div', { class: 'grid grid-cols-1 lg:grid-cols-2 gap-3' });
-  // Show ALL items sorted by quantity sold
-  const allItemsByQty = [...rows].sort((a, b) => b.qty - a.qty);
-  wrap.appendChild(itemTable('All Items (by Qty)', allItemsByQty, 'qty'));
+  // SEARCH BAR & DYNAMIC TABLE (Fixed Layout)
+  const searchIn = el('input', {
+      type: 'text',
+      placeholder: 'Search item name...',
+      class: 'w-full max-w-sm px-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm'
+  });
+
+  const tableContainer = el('div', { class: 'w-full' });
+
+  const updateTable = (filterText) => {
+      tableContainer.innerHTML = '';
+      const filteredRows = rows.filter(r => r.name.toLowerCase().includes(filterText.toLowerCase()));
+      const allItemsByQty = filteredRows.sort((a, b) => b.qty - a.qty);
+      tableContainer.appendChild(itemTable('All Items (by Qty)', allItemsByQty, 'qty'));
+  };
+
+  searchIn.oninput = (e) => updateTable(e.target.value);
+
+  // Wrap elements in a single full-width container to override the parent grid
+  const searchWrapper = el('div', { class: 'col-span-full w-full flex flex-col space-y-4' });
+  searchWrapper.appendChild(searchIn);
+  searchWrapper.appendChild(tableContainer);
+
+  wrap.appendChild(searchWrapper);
+
+  updateTable(''); // Initial render with all items
   return wrap;
 }
 
