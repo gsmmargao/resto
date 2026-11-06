@@ -35,10 +35,17 @@ export async function renderProfitBook() {
     const totalExpenses = (expData || []).reduce((sum, e) => sum + Number(e.amount || 0), 0);
     
     // Calculate supplier outstanding balance (Total Purchases - Total Payments)
-    const totalPurchases = (poData || []).reduce((s, p) => s + Number(p.grand_total || 0), 0) 
+        const totalPurchases = (poData || []).reduce((s, p) => s + Number(p.grand_total || 0), 0)
                          + (quickData || []).reduce((s, p) => s + Number(p.total || 0), 0);
-    const totalSupplierPayments = (supPayData || []).reduce((s, p) => s + Number(p.amount || 0), 0);
-    const supplierOutstanding = Math.max(0, totalPurchases - totalSupplierPayments);
+                         
+    // FIX: Calculate outstanding per supplier to match Supplier Admin perfectly
+    const supMap = {};
+    (poData || []).forEach(p => { if(p.supplier_id) supMap[p.supplier_id] = (supMap[p.supplier_id]||0) + Number(p.grand_total||0); });
+    (quickData || []).forEach(p => { if(p.supplier_id) supMap[p.supplier_id] = (supMap[p.supplier_id]||0) + Number(p.total||0); });
+    (supPayData || []).forEach(p => { if(p.supplier_id) supMap[p.supplier_id] = (supMap[p.supplier_id]||0) - Number(p.amount||0); });
+    
+    let supplierOutstanding = 0;
+    Object.values(supMap).forEach(bal => { if (bal > 0) supplierOutstanding += bal; });
     
     // Calculate the final Net Profit
     // Correct accounting: Deduct TOTAL purchases (paid + unpaid) to get true profit

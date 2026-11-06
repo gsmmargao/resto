@@ -53,23 +53,34 @@ export async function renderCashbookDetailed() {
     payments.forEach(p => {
       const amt = Number(p.amount || 0);
       const tip = Number(p.tip_amount || 0);
+      const baseAmt = Math.max(0, amt - tip); // FIX: Calculate actual base bill amount
       
       // Summary Totals (All Time)
-      if (p.mode === 'cash') cashIn += (amt + tip);
-      if (p.mode === 'upi' || p.mode === 'card') upiIn += (amt + tip);
+      if (p.mode === 'cash') cashIn += (baseAmt + tip);
+      if (p.mode === 'upi' || p.mode === 'card') upiIn += (baseAmt + tip);
       
       // Ledger List (Date Filtered)
       const pTime = new Date(p.paid_at).getTime();
-      if (amt > 0 && pTime >= rStart && pTime <= rEnd) {
+      if (baseAmt > 0 && pTime >= rStart && pTime <= rEnd) {
         const isDues = p.reference_no && (p.reference_no.toLowerCase().includes('settle') || p.reference_no.toLowerCase().includes('credit'));
         ledger.push({ 
             time: p.paid_at, 
             type: isDues ? 'Dues Paid' : 'Sales', 
             desc: isDues ? `Dues Settlement` : `Bill Payment`, 
             mode: p.mode.toUpperCase(), 
-            in: amt, 
+            in: isDues ? amt : baseAmt, 
             out: 0 
         });
+        if (tip > 0) {
+            ledger.push({ 
+                time: p.paid_at, 
+                type: 'Sales', 
+                desc: 'Digital Tip', 
+                mode: p.mode.toUpperCase(), 
+                in: tip, 
+                out: 0 
+            });
+        }
       }
     });
 

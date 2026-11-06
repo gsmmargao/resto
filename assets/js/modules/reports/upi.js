@@ -80,20 +80,21 @@ export async function renderUPI() {
     (payments || []).forEach(p => {
       const amt = Number(p.amount || 0);
       const tip = Number(p.tip_amount || 0);
+      const baseAmt = Math.max(0, amt - tip); // FIX: Calculate actual base bill amount
       const isDues = p.reference_no && (p.reference_no.toLowerCase().includes('settle') || p.reference_no.toLowerCase().includes('credit'));
       
       if (isDues) {
         totalDuesPaid += amt;
       } else {
-        totalSales += amt;
+        totalSales += baseAmt; // Use base amount for sales
       }
       totalTips += tip;
 
-      if (amt > 0) {
+      if (baseAmt > 0) {
         ledgerIn.push({
           time: p.paid_at,
           desc: isDues ? `Dues Settlement (${p.mode.toUpperCase()})` : `Digital Sale (${p.mode.toUpperCase()})`,
-          amount: amt
+          amount: isDues ? amt : baseAmt // Use base amount for the sale row
         });
       }
       if (tip > 0) {

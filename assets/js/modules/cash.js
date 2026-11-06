@@ -241,7 +241,7 @@ export async function addCashMovement({ type, amount, reason, person_name }) {
   }
 }
 
-export async function closeShift({ countedCash, notes, totals, movements, expected }) {
+export async function closeShift({ countedCash, notes, totals, movements, expected, qty }) {
   const shift = store.state.cashRegister;
   if (!shift) throw new Error('No open shift');
   // expected is now passed as a parameter
@@ -252,6 +252,7 @@ export async function closeShift({ countedCash, notes, totals, movements, expect
     closed_by: store.state.member?.id || null,
     closed_at: new Date().toISOString(),
     expected_cash: expected, counted_cash: Number(countedCash),
+    denomination_breakdown: Object.keys(qty || {}).map(d => ({ value: Number(d), count: qty[d], total: Number(d) * qty[d] })).filter(x => x.count > 0),
     cash_difference: difference, total_sales: totals.total,
     cash_sales: totals.cash, card_sales: totals.card,
     upi_sales: totals.upi, wallet_sales: totals.wallet,
@@ -495,7 +496,7 @@ async function renderHistoryPanel() {
     tbody.appendChild(el('tr', { class: 'border-t border-slate-100 hover:bg-slate-50' }, [
       el('td', { class: 'px-5 py-2 text-slate-500 text-xs whitespace-nowrap' },
         s.closed_at ? new Date(s.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'),
-      el('td', { class: 'px-5 py-2 font-medium text-slate-700' }, s.shift_name || '—'),
+      el('td', { class: 'px-5 py-2 font-medium text-indigo-600 cursor-pointer hover:underline', onclick: () => openDenominationModal(s) }, s.shift_name || '—'),
       el('td', { class: 'px-5 py-2 text-right text-slate-700' }, fmtMoney(s.total_sales)),
       el('td', { class: 'px-5 py-2 text-right text-slate-500' }, fmtMoney(s.expected_cash)),
       el('td', { class: 'px-5 py-2 text-right text-slate-700' }, fmtMoney(s.counted_cash)),
@@ -716,7 +717,7 @@ function openCloseShiftModal(root, shift, totals, movements, expected) {
     e.currentTarget.disabled = true;
     e.currentTarget.textContent = 'Closing…';
     try {
-      const result = await closeShift({ countedCash: counted, notes: notesIn.value.trim() , totals, movements, expected });
+      const result = await closeShift({ countedCash: counted, notes: notesIn.value.trim() , totals, movements, expected, qty });
       overlay.remove();
       showCloseReceipt(root, result);
     } catch (err) {
@@ -814,3 +815,51 @@ function printCloseReceipt(result) {
 }
 
 const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500';
+
+function openDenominationModal(shift) {
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const card = el('div', { class: 'bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden' });
+  
+  card.appendChild(el('div', { class: 'px-5 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0' }, [
+    el('div', {}, [
+      el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Denomination Breakdown'),
+      el('p', { class: 'text-xs text-slate-500 mt-0.5' }, shift.shift_name || 'Shift')
+    ]),
+    el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none', onclick: () => overlay.remove() }, '×')
+  ]));
+
+  const body = el('div', { class: 'p-5 space-y-2 overflow-y-auto' });
+  
+  let breakdown = [];
+  try {
+      breakdown = typeof shift.denomination_breakdown === 'string' 
+          ? JSON.parse(shift.denomination_breakdown) 
+          : (shift.denomination_breakdown || []);
+  } catch(e) { console.error('Failed to parse denominations', e); }
+
+  if (!breakdown || breakdown.length === 0) {
+      body.appendChild(el('div', { class: 'text-center py-6 text-slate-400 text-sm' }, 'No denomination data saved for this shift.'));
+  } else {
+      breakdown.forEach(item => {
+          body.appendChild(el('div', { class: 'flex justify-between items-center py-2 border-b border-slate-100 last:border-0' }, [
+              el('div', { class: 'text-sm text-slate-700 font-medium' }, `₹${item.value} × ${item.count}`),
+              el('div', { class: 'text-sm font-bold text-slate-900' }, fmtMoney(item.total))
+          ]));
+      });
+  }
+
+  body.appendChild(el('div', { class: 'flex justify-between items-center pt-3 mt-2 border-t-2 border-slate-300' }, [
+      el('span', { class: 'text-base font-bold text-slate-800' }, 'Total Counted'),
+      el('span', { class: 'text-lg font-black text-indigo-700' }, fmtMoney(shift.counted_cash || 0))
+  ]));
+
+  card.appendChild(body);
+  
+  const footer = el('div', { class: 'p-4 border-t border-slate-200 bg-slate-50 shrink-0' }, [
+      el('button', { class: 'w-full py-2.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-sm transition', onclick: () => overlay.remove() }, 'Close')
+  ]);
+  card.appendChild(footer);
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}

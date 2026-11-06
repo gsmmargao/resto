@@ -105,7 +105,7 @@ export async function renderPurchaseReport() {
         : `<span class="text-slate-600 font-medium text-xs">${row.verified_by_name || '—'}</span>`;
 
       tr.innerHTML = `
-        <td class="px-4 py-3 text-xs text-slate-500">${new Date(row.created_at).toLocaleDateString('en-GB')}</td>
+        <td class="px-4 py-3 text-xs text-slate-500">${new Date(row.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}</td>
         <td class="px-4 py-3 text-sm font-semibold text-slate-800">${row.item_name}</td>
         <td class="px-4 py-3 text-sm text-slate-600">${row.supplier_name}</td>
         <td class="px-4 py-3 text-sm font-bold text-slate-800 text-right">₹${Number(row.amount).toFixed(2)}</td>
