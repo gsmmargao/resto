@@ -43,7 +43,7 @@ export async function renderUPI() {
       .lte('created_at', rangeEnd().toISOString());
 
     const { data: periodPOs } = await supabase.from('purchase_orders')
-      .select('grand_total, created_at, po_number')
+      .select('grand_total, created_at, po_number, payment_status')
       .eq('tenant_id', tenantId)
       .in('payment_mode', ['upi', 'card'])
       .gte('created_at', rangeStart().toISOString())
@@ -112,6 +112,8 @@ export async function renderUPI() {
     });
     
     (periodPOs || []).forEach(p => {
+        // FIX: Skip if paid, because supplier_payments already recorded this cash outflow
+        if (p.payment_status === 'paid') return; 
         totalOut += Number(p.grand_total || 0);
         ledgerOut.push({ time: p.created_at, desc: `PO: ${p.po_number || 'N/A'}`, amount: Number(p.grand_total || 0) });
     });

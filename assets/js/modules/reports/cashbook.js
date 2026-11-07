@@ -10,7 +10,7 @@ export async function renderCashbookDetailed() {
 
   try {
     // 1. Fetch ALL Data (No date filters in DB query)
-    const [payRes, expRes, cashRes, supRes, quickRes, poRes] = await Promise.all([
+    const [payRes, expRes, cashRes, supRes, quickRes] = await Promise.all([
       supabase.from('payments')
         .select('amount, tip_amount, mode, paid_at, reference_no')
         .eq('outlet_id', outletId)
@@ -40,7 +40,6 @@ export async function renderCashbookDetailed() {
     const cashMovements = cashRes.data || [];
     const supplierPayments = supRes.data || [];
     const quickPurchases = quickRes.data || [];
-    const purchaseOrders = poRes.data || [];
 
     const rStart = rangeStart().getTime();
     const rEnd = rangeEnd().getTime();
