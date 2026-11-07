@@ -236,18 +236,20 @@ function renderPOList(root) {
     ]));
   });
 
-  card.appendChild(el('table', { class: 'w-full' }, [
-    el('thead', { class: 'bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide' }, [
-      el('tr', {}, [
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'PO #'),
-        el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Supplier'),
-        el('th', { class: 'text-center px-4 py-2.5 font-semibold' }, 'Items'),
-        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Total'),
-        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Payment'),
-        el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, ''),
+  card.appendChild(el('div', { class: 'overflow-x-auto w-full' }, [
+    el('table', { class: 'w-full min-w-[700px]' }, [
+      el('thead', { class: 'bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide' }, [
+        el('tr', {}, [
+          el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'PO #'),
+          el('th', { class: 'text-left px-4 py-2.5 font-semibold' }, 'Supplier'),
+          el('th', { class: 'text-center px-4 py-2.5 font-semibold' }, 'Items'),
+          el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Total'),
+          el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, 'Payment'),
+          el('th', { class: 'text-right px-4 py-2.5 font-semibold' }, ''),
+        ]),
       ]),
-    ]),
-    tbody,
+      tbody,
+    ])
   ]));
   return card;
 }

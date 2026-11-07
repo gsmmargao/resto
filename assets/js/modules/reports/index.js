@@ -14,8 +14,13 @@ import { renderProfitBook } from './profitbook.js';
 import { renderExpenses } from './expenses.js';
 import { renderPurchaseReport } from './purchase-report.js';
 
-export async function renderReports(root) {
+export async function renderReports(root, params) {
   root.innerHTML = '';
+  
+  // FIX: Read the tab from the shortcut params (e.g., { tab: 'bills' })
+  if (params && params.tab) {
+      state.tab = params.tab;
+  }
   const wrap = el('div', { class: 'h-full flex flex-col bg-slate-100' });
 
   const role = store.state.member?.role || '';

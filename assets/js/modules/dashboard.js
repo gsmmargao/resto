@@ -30,6 +30,19 @@ export async function renderDashboard(root) {
   const subnav = el('div', { class: 'flex items-center gap-2 p-2 border-b border-slate-200 bg-white overflow-x-auto whitespace-nowrap shrink-0' }, [
     tab('Tables', 'tables', startView === 'tables'),
     tab('Orders', 'orders', startView === 'orders'),
+    
+    // NEW SHORTCUTS
+    el('div', { class: 'w-px h-5 bg-slate-300 mx-1' }),
+    el('button', {
+        class: 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 transition',
+        onclick: () => navigate('reports', { tab: 'overview' })
+    }, 'Overview'),
+    el('button', {
+        class: 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition',
+        onclick: () => navigate('reports', { tab: 'bills' })
+    }, 'Bills'),
+    // END NEW SHORTCUTS
+
     startView === 'pos' ? el('button', {
       class: 'px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 ml-auto',
       onclick: () => {
