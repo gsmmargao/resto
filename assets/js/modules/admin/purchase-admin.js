@@ -188,10 +188,50 @@ function renderPOList(root) {
       el('td', { class: 'px-4 py-3 text-right text-sm font-bold text-slate-900' }, fmtMoney(po.grand_total)),
       el('td', { class: 'px-4 py-3 text-right' }, [payBadge]),
       el('td', { class: 'px-4 py-3 text-right' }, [
-        el('button', {
-          class: 'text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium',
-          onclick: () => openPODetail(root, po),
-        }, 'View'),
+        el('div', { class: 'flex justify-end gap-2' }, [
+          el('button', {
+            class: 'text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition',
+            onclick: () => openPODetail(root, po),
+          }, 'View'),
+          ['admin', 'owner', 'super-admin'].includes(store.state.member?.role) ? el('button', {
+            class: 'text-xs px-2 py-1 rounded bg-red-50 hover:bg-red-100 text-red-600 font-bold transition',
+            onclick: async (e) => {
+              if (!confirm('Are you sure you want to delete this Purchase Order? This cannot be undone.')) return;
+              const btn = e.currentTarget;
+              btn.disabled = true;
+              btn.textContent = '...';
+              try {
+                // 1. Delete associated Cash Movements (Expenses)
+                if (po.po_number) {
+                    await supabase.from('cash_movements').delete().ilike('reason', `%Purchase PO ${po.po_number}%`);
+                    await supabase.from('cash_movements').delete().ilike('reason', `%PO ${po.po_number}%`);
+                }
+
+                // 2. Delete associated Supplier Payments
+                if (po.po_number) {
+                    await supabase.from('supplier_payments').delete().ilike('notes', `%PO ${po.po_number}%`);
+                }
+
+                // 3. Delete associated PO Items (if table exists)
+                await supabase.from('purchase_order_items').delete().eq('purchase_order_id', po.id);
+
+                // 4. Delete the PO itself
+                const { error } = await supabase.from('purchase_orders').delete().eq('id', po.id);
+                if (error) throw error;
+                
+                if (window.toast) window.toast('Purchase Order and related payments deleted', 'success');
+                
+                // Reload the data and refresh the UI
+                await loadAll();
+                paint(root);
+              } catch (err) {
+                if (window.toast) window.toast('Failed to delete: ' + err.message, 'error');
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+              }
+            }
+          }, 'Delete') : null
+        ].filter(Boolean))
       ]),
     ]));
   });
