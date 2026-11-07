@@ -326,21 +326,20 @@ async function openCustomerDetail(root, c) {
                   const balance = Number(inv.balance_due || 0);
                   const paid = total - balance;
                   
-                  // Status styling
                   let rowStyle = 'text-slate-700';
-                  if (balance <= 0) rowStyle = 'text-emerald-700 bg-emerald-50/30'; // Fully paid
-                  else if (paid > 0) rowStyle = 'text-amber-700 bg-amber-50/30'; // Partial
-                  else rowStyle = 'text-red-700 bg-red-50/30'; // Due
+                  if (balance <= 0) rowStyle = 'text-emerald-700 bg-emerald-50/30';
+                  else if (paid > 0) rowStyle = 'text-amber-700 bg-amber-50/30';
+                  else rowStyle = 'text-red-700 bg-red-50/30';
 
                   return `
                     <tr class="border-b border-slate-100 last:border-0 ${rowStyle}">
                       <td class="py-2">
-                        <div class="font-bold">${inv.invoice_number}</div>
+                        <button class="font-bold text-indigo-600 hover:underline hover:text-indigo-800 transition open-invoice-btn" data-id="${inv.id}">${inv.invoice_number}</button>
                         <div class="text-[10px] text-slate-500">${new Date(inv.created_at).toLocaleDateString('en-GB')}</div>
                       </td>
-                      <td class="py-2 text-right font-medium">₹${total.toFixed(2)}</td>
-                      <td class="py-2 text-right font-bold text-emerald-600">₹${paid.toFixed(2)}</td>
-                      <td class="py-2 text-right font-bold text-red-500">₹${balance.toFixed(2)}</td>
+                      <td class="py-2 text-right font-semibold">₹${total.toFixed(2)}</td>
+                      <td class="py-2 text-right text-emerald-600 font-semibold">₹${paid.toFixed(2)}</td>
+                      <td class="py-2 text-right text-red-600 font-bold">₹${balance.toFixed(2)}</td>
                     </tr>
                   `;
                 }).join('')}
@@ -348,6 +347,24 @@ async function openCustomerDetail(root, c) {
             </table>
           </div>
         `;
+
+        // ATTACH CLICK LISTENERS SAFELY AFTER RENDER
+        list.querySelectorAll('.open-invoice-btn').forEach(btn => {
+            btn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const invId = btn.dataset.id;
+                import('../reports/modals.js').then(m => {
+                    if (typeof m.openBillReprintModal === 'function') {
+                        m.openBillReprintModal(invId);
+                    } else {
+                        console.error('Function not found in modals.js:', m);
+                    }
+                }).catch(err => {
+                    console.error('Failed to load modals.js module:', err);
+                });
+            };
+        });
 
     } catch (err) {
         console.error(err);
