@@ -11,6 +11,7 @@ import { navigate } from '../router.js';
 let realtimeChannel = null;
 
 export async function renderDashboard(root) {
+  const isWaiter = store.state.member?.role === 'waiter';
   root.innerHTML = '';
   
   // FORCE INITIAL FETCH (No skipFetch logic, no race conditions)
@@ -31,16 +32,16 @@ export async function renderDashboard(root) {
     tab('Tables', 'tables', startView === 'tables'),
     tab('Orders', 'orders', startView === 'orders'),
     
-    // NEW SHORTCUTS
-    el('div', { class: 'w-px h-5 bg-slate-300 mx-1' }),
-    el('button', {
+    // NEW SHORTCUTS (Admin/Manager only)
+    !isWaiter ? el('div', { class: 'w-px h-5 bg-slate-300 mx-1' }) : null,
+    !isWaiter ? el('button', {
         class: 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 transition',
         onclick: () => navigate('reports', { tab: 'overview' })
-    }, 'Overview'),
-    el('button', {
+    }, 'Overview') : null,
+    !isWaiter ? el('button', {
         class: 'px-3 py-1.5 rounded-lg text-sm font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition',
         onclick: () => navigate('reports', { tab: 'bills' })
-    }, 'Bills'),
+    }, 'Bills') : null,
     // END NEW SHORTCUTS
 
     startView === 'pos' ? el('button', {

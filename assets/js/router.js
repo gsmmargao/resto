@@ -14,11 +14,22 @@ export function register(name, handler) {
 export function navigate(name, params = {}, retries = 20) {
   // --- RBAC ROUTER GUARD ---
   const role = store.state.member?.role;
+  
   if (role === 'purchaser' && name !== 'reports' && name !== 'login' && name !== 'signup') {
       console.warn('[router] Purchaser restricted to Reports. Redirecting...');
       name = 'reports';
       if (location.hash !== '#reports') {
           history.replaceState({ route: 'reports', params: {} }, '', '#reports');
+      }
+  }
+
+  // WAITER GUARD: Prevent access to admin/reporting pages
+  const restrictedForWaiters = ['reports', 'suppliers', 'purchases', 'stock', 'ingredients', 'recipes', 'loyalty', 'staff-admin', 'menu-admin'];
+  if (role === 'waiter' && restrictedForWaiters.includes(name)) {
+      console.warn(`[router] Waiter restricted from "${name}". Redirecting to dashboard...`);
+      name = 'dashboard';
+      if (location.hash !== '#dashboard') {
+          history.replaceState({ route: 'dashboard', params: {} }, '', '#dashboard');
       }
   }
   // -------------------------
