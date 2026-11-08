@@ -113,7 +113,21 @@ export function renderMenuPanel(root, { onAddItem }) {
     });
 
     let items = store.state.menuItems || [];
-    if (activeCategory && activeCategory !== 'all') items = items.filter(i => i.category_id === activeCategory);
+    if (activeCategory && activeCategory !== 'all') {
+      const activeCatObj = (store.state.categories || []).find(c => c.id === activeCategory);
+      const activeCatName = activeCatObj ? activeCatObj.name.toLowerCase() : '';
+
+      items = items.filter(i => {
+          // 1st priority: Match by UUID
+          if (i.category_id === activeCategory) return true;
+          
+          // 2nd priority (Fallback): Match by text string if UUID is missing
+          const iCat = String(i.food_category || i.category_name || '').toLowerCase();
+          if (activeCatName && iCat && (iCat === activeCatName || iCat.includes(activeCatName))) return true;
+          
+          return false;
+      });
+    }
     if (search) items = items.filter(i => (i.name || '').toLowerCase().includes(search) || (i.short_name || '').toLowerCase().includes(search));
 
     list.innerHTML = '';
@@ -199,7 +213,12 @@ export function renderMenuPanel(root, { onAddItem }) {
           // Normal price/category display
           el('div', { class: 'flex justify-between items-end mt-auto w-full' }, [
               el('div', { class: 'text-xs font-semibold text-slate-700' }, `₹${item.base_price}`),
-              el('span', { class: 'text-[10px] text-slate-400 font-medium' }, 'FOOD')
+              el('span', { class: 'text-[10px] text-slate-400 font-medium uppercase' }, (() => {
+          const cat = (store.state.categories || []).find(c => c.id === item.category_id);
+          if (cat && cat.name) return cat.name;
+          if (item.food_category) return item.food_category;
+          return 'ITEM';
+      })())
           ])
       ]);
       list.appendChild(card);

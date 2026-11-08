@@ -162,18 +162,63 @@ export async function loadOrderIntoCart(orderId) {
 
 function _computeTotals(cart) {
   let gross = 0;
+  let foodGross = 0;
+  let bevGross = 0;
+
   (cart.items || []).forEach(l => {
-    gross += l.qty * l.unitPrice;
+    const lineTotal = l.qty * l.unitPrice;
+    gross += lineTotal;
+    
+    let isBeverage = false;
+    let catName = '';
+
+    // 1. Direct match on the cart line
+    const directCat = String(l.categoryName || l.category_name || l.category || '').toLowerCase();
+    if (directCat.includes('beverage') || directCat.includes('drink') || directCat.includes('bar') || directCat.includes('mocktail')) {
+        isBeverage = true;
+        catName = directCat;
+    } 
+    
+    // 2. If not found, look up the menu item by ID or Name
+    if (!isBeverage) {
+        const menuItem = (store.state.menuItems || []).find(m => String(m.id) === String(l.menuItemId) || m.name === l.name);
+        if (menuItem) {
+            // First check the text category
+            const textCat = String(menuItem.food_category || menuItem.category_name || menuItem.categoryName || '').toLowerCase();
+            if (textCat.includes('beverage') || textCat.includes('drink') || textCat.includes('bar') || textCat.includes('mocktail')) {
+                isBeverage = true;
+                catName = textCat;
+            } 
+            // Then check the UUID category
+            else if (menuItem.category_id) {
+                const catObj = (store.state.categories || []).find(c => c.id === menuItem.category_id);
+                if (catObj) {
+                    const uuidCat = String(catObj.name || '').toLowerCase();
+                    if (uuidCat.includes('beverage') || uuidCat.includes('drink') || uuidCat.includes('bar') || uuidCat.includes('mocktail')) {
+                        isBeverage = true;
+                        catName = uuidCat;
+                    }
+                }
+            }
+        }
+    }
+
+    if (isBeverage) {
+        bevGross += lineTotal;
+    } else {
+        foodGross += lineTotal;
+    }
   });
 
   let manualDiscount = 0;
   const dType = cart.discountType || 'amount';
   const dVal = Number(cart.discountValue) || 0;
 
+  // Apply discount ONLY to food
   if (dType === 'percent') {
-    manualDiscount = gross * (Math.min(dVal, 100) / 100);
+    manualDiscount = foodGross * (Math.min(dVal, 100) / 100);
   } else {
-    manualDiscount = Math.min(dVal, gross);
+    manualDiscount = Math.min(dVal, foodGross);
   }
 
   const finalTaxable = gross - manualDiscount;
@@ -183,7 +228,7 @@ function _computeTotals(cart) {
   const roundOff = Math.round(grand) - grand;
   grand = Math.round(grand);
   
-  cart.totals = { gross, taxable: finalTaxable, tax: 0, discount: manualDiscount, serviceCharge, roundOff, grand };
+  cart.totals = { gross, foodGross, bevGross, taxable: finalTaxable, tax: 0, discount: manualDiscount, serviceCharge, roundOff, grand };
 }
 
 export function recalcCart() { _computeTotals(store.state.cart); notifyCartChanged(); }
@@ -221,8 +266,9 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 
 
   const totals = el('div', { class: 'bg-white border-t border-slate-200 p-3 text-sm shrink-0' }, [
-    row('Subtotal', fmtMoney(t.gross)),
-    t.discount > 0 ? row('Discount', `− ${fmtMoney(t.discount)}`, 'text-emerald-600') : null,
+    t.foodGross > 0 ? row('Food Total', fmtMoney(t.foodGross)) : null,
+    t.bevGross > 0 ? row('Beverage Total', fmtMoney(t.bevGross)) : null,
+    t.discount > 0 ? row(window.store.state.cart.discountType === 'percent' ? 'Food Discount' : 'Special Discount', '− ' + fmtMoney(t.discount), 'text-emerald-600') : null,
     t.serviceCharge > 0 ? row('Service Charge', fmtMoney(t.serviceCharge)) : null,
     t.roundOff !== 0 ? row('Round Off', fmtMoney(t.roundOff)) : null,
     el('div', { class: 'flex justify-between pt-2 mt-2 border-t border-dashed border-slate-300 text-base font-semibold text-slate-900' }, [

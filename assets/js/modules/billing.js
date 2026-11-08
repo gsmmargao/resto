@@ -117,12 +117,13 @@ export async function openCheckoutModal(shouldPrint = false) {
   const applyModalDiscount = () => {
       const cart = window.store.state.cart;
       const gross = cart.totals.gross || 0;
-      let disc = 0;
+      const foodGross = cart.totals.foodGross || 0;
       
+      let disc = 0;
       if (cart.discountType === 'percent') {
-          disc = gross * (Math.min(cart.discountValue, 100) / 100);
+          disc = foodGross * (Math.min(cart.discountValue, 100) / 100);
       } else {
-          disc = Math.min(cart.discountValue, gross);
+          disc = Math.min(cart.discountValue, foodGross);
       }
       
       cart.totals.discount = disc;
@@ -190,9 +191,22 @@ export async function openCheckoutModal(shouldPrint = false) {
     el('span', { class: 'text-slate-800 font-medium' }, v),
   ]);
   left.appendChild(el('div', { class: 'text-sm space-y-1' }, [
-    tRow('Subtotal', fmtMoney(t.gross)),
-    t.discount > 0 ? tRow('Discount', '− ' + fmtMoney(t.discount), 'text-emerald-600') : null,
-    t.roundOff !== 0 ? tRow('Round Off', fmtMoney(t.roundOff)) : null,
+    el('div', { class: 'flex justify-between' }, [
+        el('span', { class: 'text-slate-500' }, 'Food Total'),
+        el('span', { class: 'text-slate-800 font-medium' }, fmtMoney(t.foodGross || 0))
+    ]),
+    el('div', { class: 'flex justify-between' }, [
+        el('span', { class: 'text-slate-500' }, 'Beverage Total'),
+        el('span', { class: 'text-slate-800 font-medium' }, fmtMoney(t.bevGross || 0))
+    ]),
+    (t.discount > 0) ? el('div', { class: 'flex justify-between text-emerald-600' }, [
+        el('span', {}, window.store.state.cart.discountType === 'percent' ? 'Food Discount' : 'Special Discount'),
+        el('span', {}, '− ' + fmtMoney(t.discount))
+    ]) : null,
+    (t.roundOff !== 0) ? el('div', { class: 'flex justify-between' }, [
+        el('span', { class: 'text-slate-500' }, 'Round Off'),
+        el('span', { class: 'text-slate-800 font-medium' }, fmtMoney(t.roundOff))
+    ]) : null,
     el('div', { class: 'flex justify-between pt-2 mt-2 border-t border-slate-300 text-base font-semibold text-slate-900' }, [
       el('span', {}, 'Grand Total'), el('span', { id: 'modal-grand-total' }, fmtMoney(t.grand)),
     ]),
