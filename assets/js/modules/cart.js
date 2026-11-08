@@ -522,3 +522,43 @@ window.highlightCartItems = function() {
 window.addEventListener('cart:changed', () => {
     setTimeout(() => window.highlightCartItems(), 50);
 });
+
+
+// ============================================================
+// CART PERSISTENCE (Fixes mobile refresh losing orders)
+// ============================================================
+
+// 1. Save cart to localStorage whenever it changes
+window.addEventListener('cart:changed', () => {
+    try {
+        if (window.store && window.store.state && window.store.state.cart) {
+            localStorage.setItem('pos_active_cart', JSON.stringify(window.store.state.cart));
+        }
+    } catch (e) {
+        console.error('[Cart Persistence] Failed to save:', e);
+    }
+});
+
+// 2. Restore cart on page load
+setTimeout(() => {
+    try {
+        const savedCart = localStorage.getItem('pos_active_cart');
+        if (savedCart && window.store && window.store.state) {
+            const parsed = JSON.parse(savedCart);
+            
+            // Only restore if the current cart is actually empty
+            if (!window.store.state.cart || !window.store.state.cart.items || window.store.state.cart.items.length === 0) {
+                window.store.state.cart = parsed;
+                // Recalculate totals to ensure math is perfect
+                if (typeof _computeTotals === 'function') {
+                    _computeTotals(window.store.state.cart);
+                }
+                console.log('[Cart Persistence] Restored active cart from memory. Items:', parsed.items.length);
+                // We do NOT dispatch cart:changed here to avoid an infinite loop.
+            }
+        }
+    } catch (e) {
+        console.error('[Cart Persistence] Failed to restore:', e);
+    }
+}, 100); // 100ms delay ensures store is fully initialized
+
