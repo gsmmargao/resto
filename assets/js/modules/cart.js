@@ -300,7 +300,32 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
       
       el('button', {
         class: 'py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold transition',
-        onclick: () => { printPreBill(cart, t); },
+        onclick: async () => { 
+            // 1. Trigger the actual print
+            printPreBill(cart, t); 
+            
+            // 2. Mark the table as BILLED (grey) and save the discount
+            if (cart.orderId) {
+                try {
+                    const { supabase } = await import('../supabase-client.js');
+                    await supabase.from('orders').update({
+                        status: 'billed',
+                        discount_type: cart.discountType,
+                        discount_value: cart.discountValue,
+                        discount_total: cart.totals.discount
+                    }).eq('id', cart.orderId);
+                    
+                    // Update local state so the floor plan turns grey instantly
+                    const orderIndex = window.store.state.openOrders.findIndex(o => o.id === cart.orderId);
+                    if (orderIndex !== -1) {
+                        window.store.state.openOrders[orderIndex].status = 'billed';
+                    }
+                    window.dispatchEvent(new CustomEvent('floorplan:reload'));
+                } catch (err) {
+                    console.error('Failed to mark table as billed:', err);
+                }
+            }
+        },
       }, 'Print Bill'),
 
       // 3. Checkout (Full width, only if order exists and no new items)
