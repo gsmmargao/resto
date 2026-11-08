@@ -32,7 +32,6 @@ export async function renderCashbookDetailed() {
     if (cashRes.error) throw cashRes.error;
     if (supRes.error) throw supRes.error;
     if (quickRes.error) throw quickRes.error;
-    if (poRes.error) throw poRes.error;
 
     const payments = payRes.data || [];
     const expenses = expRes.data || [];
