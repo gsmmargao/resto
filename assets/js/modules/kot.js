@@ -67,12 +67,17 @@ export async function sendKOT() {
       const { error: iErr } = await supabase.from('order_items').insert(itemsPayload);
       if (iErr) throw iErr;
 
-      kotPayload.order_id = orderId;
-      const { error: kErr } = await supabase.from('kots').insert([kotPayload]);
-      if (kErr) throw kErr;
-
+      // FIX: Mark items as saved IMMEDIATELY after DB insert, before KOT/Print
       newItems.forEach(l => { l._saved = true; l.status = 'sent_to_kitchen'; });
       window.dispatchEvent(new CustomEvent('cart:changed'));
+
+      // Try to save KOT separately. If it fails, items are still safe.
+      try {
+          kotPayload.order_id = orderId;
+          await supabase.from('kots').insert([kotPayload]);
+      } catch (kErr) {
+          console.warn('KOT header failed to save, but items are safe.', kErr);
+      }
 
       if (CONFIG.LOCAL_SERVER_IP) {
           const printItems = newItems.filter(i => i.print_kot !== false);
