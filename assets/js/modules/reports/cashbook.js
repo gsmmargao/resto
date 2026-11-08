@@ -24,8 +24,7 @@ export async function renderCashbookDetailed() {
         .eq('outlet_id', outletId)
         .not('person_name', 'is', null),
       supabase.from('supplier_payments').select('*').eq('tenant_id', store.state.tenant.id),
-      supabase.from('purchases').select('*').eq('tenant_id', store.state.tenant.id),
-      supabase.from('purchase_orders').select('*').eq('tenant_id', store.state.tenant.id)
+      supabase.from('purchases').select('*').eq('tenant_id', store.state.tenant.id)
     ]);
 
     if (payRes.error) throw payRes.error;
