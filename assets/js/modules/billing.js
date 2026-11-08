@@ -239,53 +239,36 @@ export async function openCheckoutModal(shouldPrint = false) {
         class: 'w-full py-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-base font-semibold shadow-sm flex items-center justify-center gap-2',
         onclick: async () => {
             try {
-                // Build pre-bill payload WITH the current totals (includes discount)
+                // --- SAVE DISCOUNT & SET TO BILLED ---
                 const cart = window.store.state.cart;
-                const tableObj = store.state.tables.find(tbl => tbl.id === cart.tableId);
-                const tableName = cart.orderType === 'takeaway' ? 'Takeaway' : (tableObj ? tableObj.name : 'Takeaway');
-                
-                const payload = {
-                    header: {
-                        name: store.state.tenant?.name || 'Restaurant',
-                        address: store.state.outlet?.address_line1 || '',
-                        phone: store.state.outlet?.phone || ''
-                    },
-                    invoice: {
-                        number: 'PRE-' + (cart.orderId ? cart.orderId.slice(0,4).toUpperCase() : 'NEW'),
-                        date: new Date().toLocaleString('en-GB'),
-                        table: tableName
-                    },
-                    items: cart.items.map(it => ({
-                        name: it.name,
-                        qty: it.qty,
-                        rate: Number(it.unitPrice),
-                        amount: Number(it.qty * it.unitPrice)
-                    })),
-                    totals: { 
-                        grand: window.store.state.cart.totals.grand, 
-                        discount: window.store.state.cart.totals.discount || 0 
-                    },
-                    payments: [], 
-                    customer: { name: state.customer?.name || cart.customerName || '' }
-                };
+                if (cart.orderId) {
+                    const supabase = (await import('../supabase-client.js')).supabase;
+                    await supabase.from('orders').update({
+                        status: 'billed',
+                        discount_type: cart.discountType,
+                        discount_value: cart.discountValue,
+                        discount_total: cart.totals.discount
+                    }).eq('id', cart.orderId);
 
-                if (CONFIG.LOCAL_SERVER_IP) {
-                    const res = await fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-bill`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    if (!res.ok) throw new Error('Print server error');
-                    if (window.toast) window.toast('Pre-bill printed successfully', 'success');
-                } else {
-                    if (window.toast) window.toast('Printer not configured', 'warn');
+                    // Update local state so the table turns GREY instantly
+                    const orderIndex = window.store.state.openOrders.findIndex(o => o.id === cart.orderId);
+                    if (orderIndex !== -1) {
+                        window.store.state.openOrders[orderIndex].status = 'billed';
+                    }
+                    // Trigger UI reload for the floor plan
+                    window.dispatchEvent(new CustomEvent('floorplan:reload'));
                 }
+                // -----------------------------------------------------------
+
+                // Show success and close modal
+                if (window.toast) window.toast('Bill saved successfully. You can print it from the cart.', 'success');
+                overlay.remove();
             } catch (e) {
-                console.error('Print error:', e);
-                if (window.toast) window.toast('Failed to print bill', 'error');
+                console.error('Save error:', e);
+                if (window.toast) window.toast('Failed to save bill: ' + e.message, 'error');
             }
         }
-      }, '🖨️ Print Bill'),
+      }, '💾 Save Bill'),
       
       el('button', {
         class: 'w-full py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-base font-semibold shadow-sm',
