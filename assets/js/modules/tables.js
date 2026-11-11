@@ -453,7 +453,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                     <select id="table-selector" class="px-4 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
                         ${tables.map(t => `<option value="${t.id}" ${t.id === currentOrder.id ? 'selected' : ''}>${t.name}</option>`).join('')}
                     </select>
-                    <button style="display: none;" class="px-3 py-2 bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-sm rounded-lg shadow-sm transition flex items-center gap-2" id="btn-shift-table">
+                    <button class="px-3 py-2 bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-sm rounded-lg shadow-sm transition flex items-center gap-2" id="btn-shift-table">
                         ⇅ Shift
                     </button>
                 </div>
@@ -647,13 +647,13 @@ function openShiftTableModal(currentOrder, currentTableName, onSuccess) {
     const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col overflow-hidden' });
     
     // Get available physical tables
-    const availableTables = (window.store.state.tables || []).filter(t => t.status === 'available');
+    const availableTables = (window.store.state.tables || []).filter(t => String(t.status).toLowerCase() === 'available');
 
     card.innerHTML = `
         <div class="px-5 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
             <div>
                 <h3 class="font-bold text-lg text-slate-800">Shift Table</h3>
-                <p class="text-xs text-slate-500 mt-1">Move Order #${currentOrder.order_number} from ${currentTableName}</p>
+                <p class="text-xs text-slate-500 mt-1">Move Order #${currentOrder.order_number || 'N/A'} from ${currentTableName}</p>
             </div>
             <button class="text-slate-400 hover:text-slate-700 text-2xl leading-none" id="close-shift-modal">&times;</button>
         </div>
@@ -677,15 +677,15 @@ function openShiftTableModal(currentOrder, currentTableName, onSuccess) {
             const newTableId = e.currentTarget.getAttribute('data-id');
             const newTableName = e.currentTarget.getAttribute('data-name');
             
-            // Confirm shift
             if (!confirm(`Move order to ${newTableName}?`)) return;
 
             btn.innerHTML = '<div class="text-sm font-bold text-slate-400 animate-pulse">Shifting...</div>';
             btn.disabled = true;
 
             try {
-                // 1. Update the order
                 const isNewTakeaway = newTableName.toLowerCase().includes('take-away') || newTableName.toLowerCase().includes('takeaway');
+                
+                // 1. Update the order in DB
                 const { error: orderErr } = await supabase.from('orders')
                     .update({ 
                         table_id: newTableId, 
@@ -696,39 +696,43 @@ function openShiftTableModal(currentOrder, currentTableName, onSuccess) {
                 
                 if (orderErr) throw orderErr;
 
-                // 2. Update old table (if it existed and was a real table)
+                // 2. Update old table in DB
                 if (currentOrder.table_id) {
                     await supabase.from('dining_tables').update({ status: 'available' }).eq('id', currentOrder.table_id);
                 }
 
-                // 3. Update new table
+                // 3. Update new table in DB
                 await supabase.from('dining_tables').update({ status: 'occupied' }).eq('id', newTableId);
 
-                                if (window.toast) window.toast('Order shifted successfully', 'success');
+                if (window.toast) window.toast('Order shifted successfully', 'success');
                 overlay.remove();
                 
-                // 1. Instantly update local state so there is no flicker
+                // 4. Update local state safely
                 const oldT = window.store.state.tables.find(t => t.id === currentOrder.table_id);
                 const newT = window.store.state.tables.find(t => t.id === newTableId);
                 if (oldT) oldT.status = 'available';
                 if (newT) newT.status = 'occupied';
 
-                // 2. Update the open order in local state
                 const orderInState = window.store.state.openOrders.find(o => o.id === currentOrder.id);
                 if (orderInState) {
                     orderInState.table_id = newTableId;
                     orderInState.table_name_snapshot = newTableName;
                 }
 
-                // 3. Trigger the floor plan reload event (dashboard.js listens for this)
-                window.dispatchEvent(new CustomEvent('floorplan:reload'));
+                // Update cart if this order is currently open
+                if (window.store.state.cart && window.store.state.cart.orderId === currentOrder.id) {
+                    window.store.state.cart.tableId = newTableId;
+                    window.store.state.cart.orderType = isNewTakeaway ? 'takeaway' : 'dine_in';
+                }
 
+                // 5. Trigger instant UI reload
+                window.dispatchEvent(new CustomEvent('floorplan:reload'));
                 if (typeof onSuccess === 'function') onSuccess();
 
             } catch (err) {
-                console.error(err);
+                console.error('Shift error:', err);
                 if (window.toast) window.toast('Failed to shift: ' + err.message, 'error');
-                btn.innerHTML = `<div class="font-bold text-slate-800 text-lg">${newTableName}</div><div class="text-xs text-slate-500">PAX</div>`;
+                btn.innerHTML = `<div class="font-bold text-slate-800 text-lg">${newTableName}</div><div class="text-xs text-slate-500">${newTableId}</div>`;
                 btn.disabled = false;
             }
         };
