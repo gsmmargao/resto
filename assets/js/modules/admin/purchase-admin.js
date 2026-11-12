@@ -314,15 +314,22 @@ function openPOEditor(root) {
         draft.payment_status = e.target.value;
         if (draft.payment_status === 'paid') {
           paymentModeBox.classList.remove('hidden');
-          if (!draft.payment_mode) draft.payment_mode = 'cash'; // Auto-fill default
+          splitBox.classList.add('hidden');
+          if (!draft.payment_mode) draft.payment_mode = 'cash';
+        } else if (draft.payment_status === 'split') {
+          paymentModeBox.classList.add('hidden');
+          splitBox.classList.remove('hidden');
+          validateSplit();
         } else {
           paymentModeBox.classList.add('hidden');
+          splitBox.classList.add('hidden');
           draft.payment_mode = null;
         }
       }
     }, [
       el('option', { value: 'credit' }, 'Credit (Pay Later)'),
-      el('option', { value: 'paid' }, 'Paid (Immediate)')
+      el('option', { value: 'paid' }, 'Paid (Immediate)'),
+      el('option', { value: 'split' }, 'Split Payment (Cash/UPI/Credit)')
     ])),
     field('Notes', el('input', {
       type: 'text', value: draft.notes, placeholder: 'Optional', class: inputCls,
@@ -340,6 +347,23 @@ function openPOEditor(root) {
     el('option', { value: 'bank' }, 'Bank Transfer')
   ])));
   body.appendChild(paymentModeBox);
+
+  // --- SPLIT PAYMENT UI ---
+  const splitBox = el('div', { class: 'hidden grid grid-cols-3 gap-3 mt-3' }, [
+      field('Cash Amount', el('input', { type: 'number', id: 'split-cash-input', class: inputCls, value: '0', oninput: () => validateSplit() })),
+      field('UPI Amount', el('input', { type: 'number', id: 'split-upi-input', class: inputCls, value: '0', oninput: () => validateSplit() })),
+      field('Credit Amount', el('input', { type: 'number', id: 'split-credit-display', class: inputCls, readonly: true, value: '0', style: 'background: #f8fafc; color: #64748b;' }))
+  ]);
+  body.appendChild(splitBox);
+
+  function validateSplit() {
+      const total = lines.reduce((sum, l) => sum + (l.quantity * l.unit_price), 0);
+      const cash = Number(document.getElementById('split-cash-input')?.value) || 0;
+      const upi = Number(document.getElementById('split-upi-input')?.value) || 0;
+      const credit = Math.max(0, total - cash - upi);
+      const display = document.getElementById('split-credit-display');
+      if (display) display.value = credit.toFixed(2);
+  }
 
   // Line items
   const linesCard = el('div', { class: 'border border-slate-200 rounded-xl overflow-hidden' });
@@ -484,6 +508,7 @@ function openPOEditor(root) {
       el('span', {}, 'Total Bill'),
       el('span', {}, fmtMoney(subtotal)),
     ]));
+    if (draft.payment_status === 'split') validateSplit();
   }
 
   card.appendChild(body);
@@ -561,54 +586,78 @@ function openPOEditor(root) {
       }
       const nextPoNumber = 'PO-' + (maxPO + 1);
 
+      // --- SPLIT PAYMENT LOGIC ---
+      let finalStatus = draft.payment_status;
+      let finalMode = draft.payment_mode || 'cash';
+
+      if (draft.payment_status === 'split') {
+          const cashAmt = Number(document.getElementById('split-cash-input').value) || 0;
+          const upiAmt = Number(document.getElementById('split-upi-input').value) || 0;
+          finalStatus = (cashAmt + upiAmt >= subtotal) ? 'paid' : 'credit';
+          finalMode = 'split';
+      }
+
       const payload = {
         tenant_id: draft.tenant_id,
         outlet_id: draft.outlet_id,
         supplier_id: draft.supplier_id,
         po_number: nextPoNumber,
-        status: 'received', // Instantly mark as received since we are stocking it
+        status: 'received',
         order_date: draft.order_date,
         subtotal: subtotal,
         tax_total: 0,
         grand_total: subtotal,
-        payment_status: draft.payment_status,
-        payment_mode: draft.payment_mode || 'cash',
+        payment_status: finalStatus,
+        payment_mode: finalMode,
         notes: draft.notes || null,
         created_by: store.state.session?.user?.id || null,
       };
       let { data: po, error: poErr } = await supabase.from('purchase_orders').insert(payload).select().single();
       
-      
-      
       if (poErr) throw poErr;
 
-      // 1. Auto-record the supplier payment if marked as paid
-      if (payload.payment_status === 'paid') {
+      // 1. Record Payments
+      if (draft.payment_status === 'paid') {
         const { error: payErr } = await supabase.from('supplier_payments').insert({
           tenant_id: draft.tenant_id,
           supplier_id: draft.supplier_id,
           amount: payload.grand_total,
-          payment_mode: (draft.payment_mode || 'cash').toLowerCase(),
+          payment_mode: finalMode.toLowerCase(),
           notes: `Auto-payment for PO ${po.po_number}`,
           created_by: store.state.session?.user?.id || null
         });
         if (payErr) console.error("Failed to record auto-payment:", payErr);
 
-        // Record in cash_movements if cash
-        if (payload.payment_mode === 'cash') {
+        if (finalMode === 'cash') {
             try {
                 const { addCashMovement } = await import('../cash.js');
                 await addCashMovement({ 
-                    type: 'cash_out', 
-                    amount: payload.grand_total, 
-                    reason: `Purchase PO ${po.po_number}`, 
-                    person_name: null 
+                    type: 'cash_out', amount: payload.grand_total, reason: `Purchase PO ${po.po_number}`, person_name: null 
                 });
-            } catch (err) {
-                console.error('Failed to record cash movement:', err);
-                toast('Warning: Could not deduct from counter. Ensure shift is open.', 'warn');
-            }
+            } catch (err) { console.error('Failed to record cash movement:', err); }
         }
+      } 
+      else if (draft.payment_status === 'split') {
+          const cashAmt = Number(document.getElementById('split-cash-input').value) || 0;
+          const upiAmt = Number(document.getElementById('split-upi-input').value) || 0;
+
+          if (cashAmt > 0) {
+              await supabase.from('supplier_payments').insert({
+                  tenant_id: draft.tenant_id, supplier_id: draft.supplier_id, amount: cashAmt, payment_mode: 'cash',
+                  notes: `Split auto-payment for PO ${po.po_number} (Cash)`, created_by: store.state.session?.user?.id || null
+              });
+              try {
+                  const { addCashMovement } = await import('../cash.js');
+                  await addCashMovement({ type: 'cash_out', amount: cashAmt, reason: `Purchase PO ${po.po_number} (Split)`, person_name: null });
+              } catch (err) { console.error('Failed to record cash movement:', err); }
+          }
+
+          if (upiAmt > 0) {
+              await supabase.from('supplier_payments').insert({
+                  tenant_id: draft.tenant_id, supplier_id: draft.supplier_id, amount: upiAmt, payment_mode: 'upi',
+                  notes: `Split auto-payment for PO ${po.po_number} (UPI)`, created_by: store.state.session?.user?.id || null
+              });
+          }
       }
 
       // 2. Create PO Items
