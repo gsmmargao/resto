@@ -708,7 +708,7 @@ function openPOEditor(root) {
 // ============================================================
 // VIEW DETAILS
 // ============================================================
-function openPODetail(root, po) {
+async function openPODetail(root, po) {
   const items = state.poItems[po.id] || [];
 
   const overlay = el('div', { class: 'fixed inset-0 bg-black/50 z-[80] flex items-start md:items-center justify-center p-4 overflow-y-auto' });
@@ -723,9 +723,41 @@ function openPODetail(root, po) {
   ]));
 
   const body = el('div', { class: 'p-5 space-y-4' });
-  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3 text-sm' }, [
+
+  // DYNAMIC PAYMENT STATUS BLOCK
+  let paymentStatusUI = kv('Payment Status', po.payment_status === 'paid' ? `PAID (${po.payment_mode})` : 'CREDIT');
+  
+  if (po.payment_status === 'paid' && po.payment_mode === 'split') {
+      // Fetch directly from DB since state.payments doesn't exist here
+      const { data: relatedPays } = await supabase.from('supplier_payments').select('*').ilike('notes', `%${po.po_number}%`);
+      
+      const cashAmt = (relatedPays || []).filter(p => p.payment_mode === 'cash').reduce((s, p) => s + Number(p.amount || 0), 0);
+      const upiAmt = (relatedPays || []).filter(p => p.payment_mode === 'upi').reduce((s, p) => s + Number(p.amount || 0), 0);
+      
+      if (cashAmt > 0 || upiAmt > 0) {
+          paymentStatusUI = el('div', { class: 'col-span-2 bg-slate-50 p-3 rounded-lg border border-slate-200 mt-1' }, [
+              el('div', { class: 'text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-2' }, 'Payment Breakdown (Split)'),
+              el('div', { class: 'flex items-center gap-6' }, [
+                  cashAmt > 0 ? el('div', { class: 'flex flex-col' }, [
+                      el('span', { class: 'text-[10px] text-slate-400 font-bold uppercase' }, 'Cash Paid'),
+                      el('span', { class: 'text-sm font-bold text-emerald-600' }, fmtMoney(cashAmt))
+                  ]) : null,
+                  upiAmt > 0 ? el('div', { class: 'flex flex-col' }, [
+                      el('span', { class: 'text-[10px] text-slate-400 font-bold uppercase' }, 'UPI Paid'),
+                      el('span', { class: 'text-sm font-bold text-indigo-600' }, fmtMoney(upiAmt))
+                  ]) : null,
+                  el('div', { class: 'flex flex-col ml-auto text-right' }, [
+                      el('span', { class: 'text-[10px] text-slate-400 font-bold uppercase' }, 'Total Paid'),
+                      el('span', { class: 'text-sm font-bold text-slate-800' }, fmtMoney(cashAmt + upiAmt))
+                  ])
+              ])
+          ]);
+      }
+  }
+
+  body.appendChild(el('div', { class: 'grid grid-cols-2 gap-3 text-sm' },[
     kv('Date', new Date(po.order_date).toLocaleDateString('en-IN')),
-    kv('Payment Status', po.payment_status === 'paid' ? `PAID (${po.payment_mode})` : 'CREDIT'),
+    paymentStatusUI,
   ]));
 
   const tbody = el('tbody');
@@ -734,8 +766,8 @@ function openPODetail(root, po) {
     const unit = ing?.units?.abbreviation || '';
     tbody.appendChild(el('tr', { class: 'border-t border-slate-100' }, [
       el('td', { class: 'px-4 py-2 text-sm text-slate-800' }, ing?.name || '—'),
-      el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700' }, `${Number(it.quantity)} ${unit}`),
-      el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700' }, fmtMoney(it.unit_price)),
+      el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700'}, `${Number(it.quantity)} ${unit}`),
+      el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700'}, fmtMoney(it.unit_price)),
       el('td', { class: 'px-4 py-2 text-right text-sm font-semibold text-slate-800' }, fmtMoney(it.line_total)),
     ]));
   });
