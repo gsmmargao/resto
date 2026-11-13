@@ -78,7 +78,12 @@ export async function renderOverview() {
   const wrap = el('div', {});
   const grid = el('div', { class: 'grid grid-cols-2 md:grid-cols-6 gap-3 mb-4' });
   grid.appendChild(kpi('Gross Sales', fmtMoney(gross), 'from-indigo-500 to-indigo-600', `${orderCount} orders`));
-  grid.appendChild(kpi('Discount Given', fmtMoney(totalDiscount), 'from-rose-500 to-pink-500', 'Total discount applied'));
+  
+  const discKpi = kpi('Discount Given', fmtMoney(totalDiscount), 'from-rose-500 to-pink-500', 'Total discount applied');
+  discKpi.style.cursor = 'pointer';
+  discKpi.title = 'Click to view discounted bills';
+  discKpi.onclick = () => openDiscountModal(validInvoices);
+  grid.appendChild(discKpi);
   grid.appendChild(kpi('Avg Order', fmtMoney(aov), 'from-emerald-500 to-emerald-600', `${itemCount} items sold`));
   grid.appendChild(kpi('Gross Profit', fmtMoney(grossProfit), 'from-amber-500 to-orange-500', `${marginPct.toFixed(1)}% margin`));
   grid.appendChild(kpi('Tips Collected', fmtMoney(totalTips), 'from-purple-500 to-purple-600', `${uniqueCust} unique guests`));
@@ -151,3 +156,74 @@ export async function renderOverview() {
   return wrap;
 }
 
+
+
+// ==========================================
+// DISCOUNT BREAKDOWN MODAL
+// ==========================================
+function openDiscountModal(invoices) {
+    const discountedBills = invoices.filter(inv => Number(inv.discount_total || 0) > 0);
+    
+    // Overlay: Full screen on mobile, padded on desktop
+    const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-0 sm:p-4' });
+    
+    // Card: Full height on mobile, max height on desktop. Flex col to keep header fixed.
+    const card = el('div', { class: 'bg-white w-full h-full sm:h-auto sm:max-h-[90vh] sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden sm:max-w-4xl' });
+    
+    // Header: Fixed at top
+    card.appendChild(el('div', { class: 'px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0 z-10' }, [
+        el('div', {}, [
+            el('h3', { class: 'font-bold text-lg text-slate-800' }, 'Discounted Bills'),
+            el('p', { class: 'text-xs text-slate-500 mt-0.5' }, `${discountedBills.length} bills with discounts`)
+        ]),
+        // Added a larger hit area for the close button
+        el('button', { class: 'text-slate-400 hover:text-slate-700 text-2xl leading-none p-2 -mr-2', onclick: () => overlay.remove() }, '×')
+    ]));
+
+    // Body: Scrollable area
+    const body = el('div', { class: 'flex-1 overflow-y-auto p-0 bg-white' });
+    
+    if (discountedBills.length === 0) {
+        body.innerHTML = '<div class="text-center py-10 text-slate-400">No discounted bills in this period.</div>';
+    } else {
+        // Table wrapper: Horizontal scroll for mobile
+        const tableWrap = el('div', { class: 'w-full overflow-x-auto' });
+        const tbody = el('tbody');
+        
+        discountedBills.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).forEach(inv => {
+            tbody.appendChild(el('tr', { 
+                class: 'border-b border-slate-100 hover:bg-indigo-50 cursor-pointer transition',
+                onclick: () => {
+                    import('../reports/modals.js').then(m => {
+                        if (typeof m.openBillReprintModal === 'function') {
+                            m.openBillReprintModal(inv.id);
+                        }
+                    });
+                }
+            }, [
+                el('td', { class: 'px-4 py-3 text-xs sm:text-sm text-slate-600 whitespace-nowrap' }, new Date(inv.created_at).toLocaleDateString('en-GB')),
+                el('td', { class: 'px-4 py-3 text-xs sm:text-sm font-semibold text-indigo-600 underline whitespace-nowrap' }, inv.id.slice(0,8).toUpperCase()),
+                el('td', { class: 'px-4 py-3 text-xs sm:text-sm text-right text-slate-800 whitespace-nowrap' }, fmtMoney(inv.grand_total)),
+                el('td', { class: 'px-4 py-3 text-xs sm:text-sm text-right font-bold text-rose-600 whitespace-nowrap' }, '-' + fmtMoney(inv.discount_total))
+            ]));
+        });
+
+        // min-w-[500px] ensures columns don't squish too much on mobile
+        tableWrap.appendChild(el('table', { class: 'w-full text-left min-w-[500px]' }, [
+            el('thead', { class: 'bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wider border-b border-slate-200 sticky top-0 z-0' }, [
+                el('tr', {}, [
+                    el('th', { class: 'px-4 py-3' }, 'Date'),
+                    el('th', { class: 'px-4 py-3' }, 'Invoice'),
+                    el('th', { class: 'px-4 py-3 text-right' }, 'Total'),
+                    el('th', { class: 'px-4 py-3 text-right' }, 'Discount')
+                ])
+            ]),
+            tbody
+        ]));
+        body.appendChild(tableWrap);
+    }
+    
+    card.appendChild(body);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+}

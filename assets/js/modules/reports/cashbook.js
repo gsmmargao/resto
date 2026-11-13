@@ -71,7 +71,7 @@ export async function renderCashbookDetailed() {
       
       const eTime = new Date(e.created_at).getTime();
       if (eTime >= rStart && eTime <= rEnd) {
-        ledger.push({ time: e.created_at, type: 'Expense', desc: e.category || e.reason || 'Expense', mode: e.payment_mode.toUpperCase(), in: 0, out: amt });
+        ledger.push({ time: e.created_at, type: 'Expense', desc: e.staff_name || e.custom_category || e.category || e.reason || 'Expense', mode: e.payment_mode.toUpperCase(), in: 0, out: amt });
       }
     });
 
