@@ -644,7 +644,7 @@ function openPOEditor(root) {
           if (cashAmt > 0) {
               await supabase.from('supplier_payments').insert({
                   tenant_id: draft.tenant_id, supplier_id: draft.supplier_id, amount: cashAmt, payment_mode: 'cash',
-                  notes: `Split auto-payment for PO ${po.po_number} (Cash)`, created_by: store.state.session?.user?.id || null
+                  notes: `Split auto-payment for PO ${po.po_number} (Cash)`, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null
               });
               try {
                   const { addCashMovement } = await import('../cash.js');
@@ -655,7 +655,7 @@ function openPOEditor(root) {
           if (upiAmt > 0) {
               await supabase.from('supplier_payments').insert({
                   tenant_id: draft.tenant_id, supplier_id: draft.supplier_id, amount: upiAmt, payment_mode: 'upi',
-                  notes: `Split auto-payment for PO ${po.po_number} (UPI)`, created_by: store.state.session?.user?.id || null
+                  notes: `Split auto-payment for PO ${po.po_number} (UPI)`, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null
               });
           }
       }

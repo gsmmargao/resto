@@ -5,7 +5,7 @@ import { state } from './helpers.js';
 
 export async function renderExpenses() {
   const wrapper = el('div', { class: 'w-full space-y-6' });
-  const isAdmin = ['admin', 'owner', 'super-admin'].includes(store.state.member?.role);
+  const isAdmin = store.state.member?.role === 'admin';
   wrapper.innerHTML = '<div class="text-center py-10 text-slate-500 animate-pulse">Loading Expense Book...</div>';
   
   const outletId = store.state.outlet.id;
@@ -66,7 +66,7 @@ export async function renderExpenses() {
                       <select class="mode-select px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold border border-slate-200 outline-none cursor-pointer hover:bg-slate-200 transition" data-id="${e.id}" data-old="${e.payment_mode}">
                           <option value="cash" ${e.payment_mode === 'cash' ? 'selected' : ''}>CASH</option>
                           <option value="upi" ${e.payment_mode === 'upi' ? 'selected' : ''}>UPI</option>
-                          <option value="card" ${e.payment_mode === 'card' ? 'selected' : ''}>CARD</option>
+                          
                       </select>
                   ` : `<span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-[10px] font-bold">${e.payment_mode.toUpperCase()}</span>`}
                   </td>

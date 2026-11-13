@@ -253,7 +253,7 @@ function openSupplierEditor(root, supplier) {
       document.body.style.overflow = 'auto'; // FORCE UNLOCK SCROLL
   };
 
-  const isAdmin = ['admin', 'owner', 'super-admin'].includes(store.state.member?.role);
+  const isAdmin = store.state.member?.role === 'admin';
   const showDelete = !isNew && isAdmin;
 
   const footer = el('div', { class: `grid ${showDelete ? 'grid-cols-3' : 'grid-cols-2'} gap-2 pt-2` },[
@@ -320,9 +320,9 @@ function openSupplierEditor(root, supplier) {
 
 function openLedgerModal(root, supplier) {
   const closeLedgerModal = () => { overlay.remove(); document.body.style.overflow = 'auto'; };
-  const isAdmin = ['admin', 'owner', 'super-admin'].includes(store.state.member?.role);
+  const isAdmin = store.state.member?.role === 'admin';
   const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden' });
+  const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[90vh] flex flex-col overflow-hidden' });
 
   const purchases = (state.purchases || []).filter(p => p.supplier_id === supplier.id);
   const payments = (state.payments || []).filter(p => p.supplier_id === supplier.id);
@@ -388,6 +388,7 @@ function openLedgerModal(root, supplier) {
         <tr class="text-xs text-slate-400 uppercase border-b border-slate-100">
           <th class="text-left px-4 py-2 font-medium">Date</th>
           <th class="text-left px-4 py-2 font-medium">Mode</th>
+          <th class="text-left px-4 py-2 font-medium">Notes</th>
           <th class="text-right px-4 py-2 font-medium">Amount</th>
           ${isAdmin ? '<th class="text-center px-4 py-2 font-medium">Action</th>' : ''}
         </tr>
@@ -397,9 +398,13 @@ function openLedgerModal(root, supplier) {
           <tr class="border-b border-slate-50 hover:bg-slate-50">
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
             <td class="px-4 py-3 text-sm text-slate-700 uppercase">${p.payment_mode}</td>
+            <td class="px-4 py-3 text-sm text-slate-600 max-w-[250px] break-words" title="${p.notes || ''}">${p.notes || '—'}</td>
             <td class="px-4 py-3 text-sm text-right font-medium text-emerald-600">-₹${Number(p.amount || 0).toFixed(2)}</td>
             ${isAdmin ? `<td class="px-4 py-3 text-center">
-              <button class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold edit-pay-mode-btn" data-id="${p.id}" data-mode="${p.payment_mode}">Edit</button>
+              <div class="flex justify-center items-center gap-2">
+                  <button class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold edit-pay-mode-btn" data-id="${p.id}" data-mode="${p.payment_mode}" data-amount="${p.amount}">Edit</button>
+                  <button class="text-xs text-red-600 hover:text-red-800 font-semibold delete-pay-btn" data-id="${p.id}">Delete</button>
+              </div>
             </td>` : ''}
           </tr>
         `).join('') : `<tr><td colspan="${isAdmin ? 4 : 3}" class="text-center py-8 text-slate-400 text-sm">No payments made</td></tr>`}
@@ -413,6 +418,7 @@ function openLedgerModal(root, supplier) {
               e.stopPropagation();
               const payId = e.target.getAttribute('data-id');
               const oldMode = e.target.getAttribute('data-mode');
+              const payAmount = Number(e.target.getAttribute('data-amount'));
               
               const modalOverlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[120] flex items-center justify-center p-4' });
               const modalCard = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-sm p-5 space-y-4' }, [
@@ -430,11 +436,22 @@ function openLedgerModal(root, supplier) {
                           if (newMode === oldMode.toLowerCase()) { modalOverlay.remove(); return; }
                           
                           ev.target.disabled = true; ev.target.textContent = 'Saving...';
-                          const { error } = await supabase.from('supplier_payments').update({ payment_mode: newMode }).eq('id', payId);
+                          const oldModeLower = oldMode.toLowerCase();
+                          const newModeLower = newMode.toLowerCase();
+
+                          const { error } = await supabase.from('supplier_payments').update({ payment_mode: newModeLower }).eq('id', payId);
                           if (error) {
                               if (window.toast) window.toast('Failed: ' + error.message, 'error');
                               ev.target.disabled = false; ev.target.textContent = 'Save';
                           } else {
+                              // FIX: Sync cash_movements
+                              if (oldModeLower === 'cash' && newModeLower !== 'cash') {
+                                  await supabase.from('cash_movements').delete().eq('reference_id', payId);
+                              } else if (oldModeLower !== 'cash' && newModeLower === 'cash') {
+                                  const { addCashMovement } = await import('../cash.js');
+                                  await addCashMovement({ type: 'cash_out', amount: payAmount, reason: 'Payment to Supplier (Edited)', person_name: null, reference_id: payId });
+                              }
+
                               if (window.toast) window.toast('Payment mode updated', 'success');
                               modalOverlay.remove();
                               overlay.remove();
@@ -448,6 +465,37 @@ function openLedgerModal(root, supplier) {
               modalCard.querySelector('#new-pay-mode').value = oldMode.toLowerCase();
               modalOverlay.appendChild(modalCard);
               document.body.appendChild(modalOverlay);
+          };
+      });
+
+      // DELETE PAYMENT LOGIC
+      rightCol.querySelectorAll('.delete-pay-btn').forEach(btn => {
+          btn.onclick = async (e) => {
+              e.stopPropagation();
+              if (!confirm('Are you sure you want to permanently delete this payment? This will also remove it from the Cashbook.')) return;
+              
+              const payId = e.currentTarget.getAttribute('data-id');
+              const btnEl = e.currentTarget;
+              btnEl.disabled = true;
+              btnEl.textContent = '...';
+
+              try {
+                  // 1. Delete from supplier_payments
+                  const { error: delErr } = await supabase.from('supplier_payments').delete().eq('id', payId);
+                  if (delErr) throw delErr;
+
+                  // 2. Delete from cash_movements (using the reference_id)
+                  await supabase.from('cash_movements').delete().eq('reference_id', payId);
+
+                  if (window.toast) window.toast('Payment deleted successfully', 'success');
+                  overlay.remove();
+                  openLedgerModal(root, supplier);
+                  loadAll().then(() => paint(root));
+              } catch (err) {
+                  if (window.toast) window.toast('Failed to delete: ' + err.message, 'error');
+                  btnEl.disabled = false;
+                  btnEl.textContent = 'Delete';
+              }
           };
       });
   }
@@ -568,7 +616,7 @@ function openPurchaseModal(root, supplierId) {
             tenant_id: store.state.tenant.id, outlet_id: store.state.outlet.id, supplier_id: supplierId,
             po_number: nextPoNumber, subtotal: amount, tax_total: 0, grand_total: amount,
             payment_mode: finalMode, payment_status: finalStatus, status: 'received',
-            notes: notesIn.value.trim() || null, created_by: store.state.session?.user?.id || null
+            notes: notesIn.value.trim() || null, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null
           };
           
           const { data: newPO, error } = await supabase.from('purchase_orders').insert(poPayload).select().single();
@@ -579,24 +627,26 @@ function openPurchaseModal(root, supplierId) {
               const upiAmt = Number(document.getElementById('pur-upi-amt').value) || 0;
 
               if (cashAmt > 0) {
-                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: cashAmt, payment_mode: 'cash', notes: `Split payment for PO ${nextPoNumber}`, created_by: store.state.session?.user?.id || null });
+                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: cashAmt, payment_mode: 'cash', notes: `Split payment for PO ${nextPoNumber}`, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null });
                   try {
                       const { addCashMovement } = await import('../cash.js');
                       await addCashMovement({ type: 'cash_out', amount: cashAmt, reason: `Purchase PO ${nextPoNumber} (Split)`, person_name: null });
                   } catch (err) { console.error('Failed to record cash movement:', err); }
               }
               if (upiAmt > 0) {
-                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: upiAmt, payment_mode: 'upi', notes: `Split payment for PO ${nextPoNumber}`, created_by: store.state.session?.user?.id || null });
+                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: upiAmt, payment_mode: 'upi', notes: `Split payment for PO ${nextPoNumber}`, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null });
               }
           } else if (modeIn.value !== 'credit') {
+              const purPayId = crypto.randomUUID();
               await supabase.from('supplier_payments').insert({
+                  id: purPayId,
                   tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: amount, payment_mode: modeIn.value,
-                  notes: `Auto-payment for PO ${nextPoNumber}`, created_by: store.state.session?.user?.id || null
+                  notes: `Auto-payment for PO ${nextPoNumber}`, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null
               });
               if (modeIn.value === 'cash') {
                   try {
                       const { addCashMovement } = await import('../cash.js');
-                      await addCashMovement({ type: 'cash_out', amount: amount, reason: `Purchase PO ${nextPoNumber}`, person_name: null });
+                      await addCashMovement({ type: 'cash_out', amount: amount, reason: `Purchase PO ${nextPoNumber}`, person_name: null, reference_id: purPayId });
                   } catch (err) { console.error('Failed to record cash movement:', err); }
               }
           }
@@ -674,24 +724,26 @@ function openPaymentModal(root, supplierId, maxBalance) {
               if (Math.abs((cashAmt + upiAmt) - amount) > 0.01) throw new Error("Split amounts must equal total amount");
 
               if (cashAmt > 0) {
-                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: cashAmt, payment_mode: 'cash', notes: notesIn.value.trim() || null, created_by: store.state.session?.user?.id || null });
+                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: cashAmt, payment_mode: 'cash', notes: notesIn.value.trim() || null, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null });
                   try {
                       const { addCashMovement } = await import('../cash.js');
                       await addCashMovement({ type: 'cash_out', amount: cashAmt, reason: 'Split Payment to Supplier', person_name: null });
                   } catch (err) { console.error('Failed to record cash movement:', err); }
               }
               if (upiAmt > 0) {
-                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: upiAmt, payment_mode: 'upi', notes: notesIn.value.trim() || null, created_by: store.state.session?.user?.id || null });
+                  await supabase.from('supplier_payments').insert({ tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: upiAmt, payment_mode: 'upi', notes: notesIn.value.trim() || null, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null });
               }
           } else {
+              const payId = crypto.randomUUID();
               const { error } = await supabase.from('supplier_payments').insert({
-                tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: amount, payment_mode: modeIn.value, notes: notesIn.value.trim() || null, created_by: store.state.session?.user?.id || null
+                id: payId,
+                tenant_id: store.state.tenant.id, supplier_id: supplierId, amount: amount, payment_mode: modeIn.value, notes: notesIn.value.trim() || null, created_at: new Date().toISOString(), created_by: store.state.session?.user?.id || null
               });
               if (error) throw error;
               if (modeIn.value === 'cash') {
                   try {
                       const { addCashMovement } = await import('../cash.js');
-                      await addCashMovement({ type: 'cash_out', amount: amount, reason: 'Payment to Supplier', person_name: null });
+                      await addCashMovement({ type: 'cash_out', amount: amount, reason: 'Payment to Supplier', person_name: null, reference_id: payId });
                   } catch (err) { console.error('Failed to record cash movement:', err); }
               }
           }

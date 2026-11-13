@@ -212,7 +212,7 @@ export async function openShift({ openingBalance, shiftName, notes }) {
   return data;
 }
 
-export async function addCashMovement({ type, amount, reason, person_name }) {
+export async function addCashMovement({ type, amount, reason, person_name, reference_id }) {
   const shift = store.state.cashRegister;
   if (!shift) throw new Error('No open shift');
   
@@ -224,7 +224,7 @@ export async function addCashMovement({ type, amount, reason, person_name }) {
     movement_type: type, amount: Number(amount),
     person_name: person_name || null,
     person_name: person_name || null,
-    reason: reason || null, created_by: store.state.member?.id || null,
+    reason: reason || null, reference_id: reference_id || null, created_by: store.state.member?.id || null,
   });
   if (error) throw error;
 

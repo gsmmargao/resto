@@ -246,6 +246,29 @@ function buildMemberCard(member, root) {
       class: 'text-[10px] px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-medium',
       onclick: (e) => { e.stopPropagation(); openMemberEditor(root, member); },
     }, 'Edit'),
+    // ADMIN ONLY DELETE BUTTON
+    (store.state.member?.role === 'admin') ? el('button', {
+      class: 'text-[10px] px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 font-medium ml-2',
+      onclick: async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Are you sure you want to permanently delete ${member.display_name || 'this staff member'}? This cannot be undone.`)) return;
+          
+          e.target.disabled = true;
+          e.target.textContent = '...';
+          try {
+              const { error } = await supabase.from('tenant_members').delete().eq('id', member.id);
+              if (error) throw error;
+              
+              toast('Staff member deleted', 'success');
+              await loadAll();
+              paint(root);
+          } catch (err) {
+              toast('Failed to delete: ' + err.message, 'error');
+              e.target.disabled = false;
+              e.target.textContent = 'Delete';
+          }
+      }
+    }, 'Delete') : null,
   ]);
   card.appendChild(foot);
   return card;

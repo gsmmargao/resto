@@ -248,6 +248,7 @@ function openPayoutModal(root, maxAvailable) {
           const { error } = await supabase.from('tip_payouts').insert({
             tenant_id: store.state.tenant.id, outlet_id: store.state.outlet.id,
             amount: amount, payment_mode: modeIn.value, staff_name: staff,
+            created_at: new Date().toISOString(),
             created_by: store.state.session?.user?.id || null
           });
           if (error) throw error;
@@ -262,7 +263,9 @@ function openPayoutModal(root, maxAvailable) {
                 cash_register_id: shift.id,
                 movement_type: 'tip_payout',
                 amount: amount,
+                person_name: staff,
                 reason: `Tip payout to ${staff}`,
+                created_at: new Date().toISOString(),
                 created_by: store.state.session?.user?.id || null
               });
             }
