@@ -366,7 +366,7 @@ function openLedgerModal(root, supplier) {
         ${purchases.length ? purchases.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at)).map(p => `
           <tr class="border-b border-slate-50 hover:bg-slate-50">
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
-            <td class="px-4 py-3 text-sm text-slate-700">${p.notes || 'Purchase Bill'}</td>
+            <td class="px-4 py-3 text-sm text-indigo-600 underline cursor-pointer hover:text-indigo-800 po-detail-btn" data-id="${p.id}">${p.notes || 'Purchase Bill'}</td>
             <td class="px-4 py-3 text-sm text-right font-medium text-red-600">+₹${Number(p.grand_total || p.total || 0).toFixed(2)}</td>
             ${isAdmin ? `<td class="px-4 py-3 text-center">
                 <button class="btn-del-purchase text-red-500 hover:text-red-700 transition" data-id="${p.id}" title="Delete Purchase">
@@ -378,6 +378,17 @@ function openLedgerModal(root, supplier) {
       </tbody>
     </table>
   `;
+
+  leftCol.querySelectorAll('.po-detail-btn').forEach(btn => {
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            const poId = e.currentTarget.getAttribute('data-id');
+            const po = purchases.find(x => x.id === poId);
+            if (po) {
+                openSupplierPODetail(root, po);
+            }
+        };
+    });
 
   const rightCol = el('div', {});
   
@@ -761,4 +772,59 @@ function openPaymentModal(root, supplierId, maxBalance) {
   card.appendChild(footer);
   overlay.appendChild(card);
   document.body.appendChild(overlay);
+}
+
+
+function openSupplierPODetail(root, po) {
+    const overlay = el('div', { class: 'fixed inset-0 bg-black/60 flex items-center justify-center p-4', style: 'z-index: 9999;' });
+    const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden' });
+    card.innerHTML = `
+        <div class="px-5 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
+            <div>
+                <h3 class="font-bold text-lg text-slate-800">PO Details</h3>
+                <p class="text-xs text-slate-500">${po.po_number || 'Purchase'}</p>
+            </div>
+            <button class="text-slate-400 hover:text-slate-700 text-2xl leading-none" id="close-po-detail">&times;</button>
+        </div>
+        <div class="p-5 overflow-y-auto" id="po-detail-body">
+            <div class="text-center py-4 text-slate-500 animate-pulse">Loading items...</div>
+        </div>
+    `;
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    card.querySelector('#close-po-detail').onclick = () => overlay.remove();
+    
+    supabase.from('purchase_order_items').select('*, ingredients(name)').eq('purchase_order_id', po.id).then(({data: items}) => {
+        const body = card.querySelector('#po-detail-body');
+        if (!items || items.length === 0) {
+            body.innerHTML = '<div class="text-center text-slate-500">No items found for this purchase.</div>';
+            return;
+        }
+        const tbody = el('tbody');
+        items.forEach(it => {
+            tbody.appendChild(el('tr', { class: 'border-t border-slate-100' }, [
+                el('td', { class: 'px-4 py-2 text-sm text-slate-800' }, it.ingredients?.name || 'Unknown'),
+                el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700' }, it.quantity),
+                el('td', { class: 'px-4 py-2 text-right text-sm text-slate-700' }, fmtMoney(it.unit_price)),
+                el('td', { class: 'px-4 py-2 text-right text-sm font-semibold text-slate-800' }, fmtMoney(it.line_total)),
+            ]));
+        });
+        body.innerHTML = '';
+        body.appendChild(el('table', { class: 'w-full border border-slate-200 rounded-lg overflow-hidden' }, [
+            el('thead', { class: 'bg-slate-50 text-slate-500 text-[10px] uppercase tracking-wide' }, [
+                el('tr', {}, [
+                    el('th', { class: 'text-left px-4 py-2 font-semibold' }, 'Ingredient'),
+                    el('th', { class: 'text-right px-4 py-2 font-semibold' }, 'Qty'),
+                    el('th', { class: 'text-right px-4 py-2 font-semibold' }, 'Unit Price'),
+                    el('th', { class: 'text-right px-4 py-2 font-semibold' }, 'Total'),
+                ])
+            ]),
+            tbody
+        ]));
+        body.appendChild(el('div', { class: 'bg-slate-50 rounded-lg p-4 mt-4 text-sm' }, [
+            el('div', { class: 'flex justify-between font-bold text-slate-900 text-base' }, [
+                el('span', {}, 'Total Bill'), el('span', {}, fmtMoney(po.grand_total || po.total)),
+            ]),
+        ]));
+    });
 }
