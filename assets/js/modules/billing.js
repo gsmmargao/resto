@@ -85,6 +85,14 @@ export async function openCheckoutModal(shouldPrint = false) {
   if (!cart.orderId) { toast('Send to kitchen first', 'warn'); return; }
 
   const orderId = cart.orderId;
+  
+  // FIX: Block the UI if an order is already being processed
+  if (window.__processingPayment) {
+      if(window.toast) window.toast('Payment is already processing. Please wait...', 'warn');
+      return;
+  }
+  window.__processingPayment = true;
+  setTimeout(() => { window.__processingPayment = false; }, 5000); // Reset after 5s as a safety net
 
   const state = {
     customer: { 
