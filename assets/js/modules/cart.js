@@ -236,11 +236,11 @@ export function recalcCart() { _computeTotals(store.state.cart); notifyCartChang
 export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTable, onEditItem }) {
   root.innerHTML = '';
   // Force the container to fill the height and use flexbox
-  root.className = 'h-full flex flex-col bg-white';
+  root.className = 'h-full flex flex-col bg-white min-h-0 overflow-hidden';
   const cart = store.state.cart;
   const t = cart.totals || { gross:0, taxable:0, tax:0, discount:0, serviceCharge:0, roundOff:0, grand:0 };
 
-  const header = el('div', { class: 'p-3 border-b border-slate-200 bg-white' }, [
+  const header = el('div', { class: 'p-3 border-b border-slate-200 bg-white shrink-0' }, [
     cart.orderId ? el('div', { class: 'mb-2 px-2 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between' }, [
       el('span', { class: 'font-medium' }, 'Editing existing order'),
       el('span', { class: 'text-[10px] opacity-80 font-mono' }, cart.orderId.slice(0, 8)),
