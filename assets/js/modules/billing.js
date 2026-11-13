@@ -572,6 +572,15 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
           }
         } catch (err) {
           console.error(err);
+          
+          // DUPLICATE PAYMENT FIX: Handle ALREADY_PAID gracefully
+          if (err.message === 'ALREADY_PAID') {
+              if(window.toast) window.toast('This bill was already settled successfully. Refreshing...', 'success');
+              overlay.remove();
+              setTimeout(() => window.location.reload(), 1500);
+              return;
+          }
+
           if(window.toast) window.toast('Payment failed: ' + err.message, 'error');
           btn.disabled = false; btn.textContent = 'Confirm Payment';
         }

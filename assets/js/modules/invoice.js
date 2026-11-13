@@ -4,6 +4,18 @@ import { store } from '../store.js';
 const round2 = n => Math.round(Number(n || 0) * 100) / 100;
 
 export async function saveInvoiceAndPayments({ orderId, totals, customer, payments, tipAmount }) {
+  // DUPLICATE GUARD: Check if this order already has an invoice
+  try {
+      const { data: existingInv } = await supabase.from('invoices').select('id').eq('order_id', orderId).limit(1);
+      if (existingInv && existingInv.length > 0) {
+          throw new Error('ALREADY_PAID');
+      }
+  } catch (e) {
+      if (e.message === 'ALREADY_PAID') throw e;
+      console.warn('Could not verify existing invoice:', e);
+  }
+
+
   const tenant  = store.state.tenant;
   const outlet  = store.state.outlet;
   const session = store.state.session;
