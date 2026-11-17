@@ -165,6 +165,19 @@ function paint(root) {
   }
 
   // 5. List Rows
+  // SORT BY HIGHEST BALANCE (OUTSTANDING) DESCENDING
+  filtered.sort((a, b) => {
+      const aPurchases = (state.purchases || []).filter(p => p.supplier_id === a.id).reduce((sum, p) => sum + Number(p.grand_total || p.total || 0), 0);
+      const aPayments = (state.payments || []).filter(p => p.supplier_id === a.id).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const aOutstanding = aPurchases - aPayments;
+
+      const bPurchases = (state.purchases || []).filter(p => p.supplier_id === b.id).reduce((sum, p) => sum + Number(p.grand_total || p.total || 0), 0);
+      const bPayments = (state.payments || []).filter(p => p.supplier_id === b.id).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const bOutstanding = bPurchases - bPayments;
+
+      return bOutstanding - aOutstanding; // Highest balance first
+  });
+
   filtered.forEach(s => {
     const purchases = (state.purchases || []).filter(p => p.supplier_id === s.id);
     const payments = (state.payments || []).filter(p => p.supplier_id === s.id);
