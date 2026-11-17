@@ -5,58 +5,109 @@ import { buildReceiptData, buildReceiptHTML } from '../receipt.js?v=1793466117';
 import { buildReceiptBytes, printUSB, printHTML, isUSBConnected } from '../printer.js';
 
 export function openPersonLedgerModal(name, movements) {
-  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
-  const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden' });
-  
-  let totalHeld = 0;
-  movements.forEach(m => {
-    const typeStr = (m.movement_type || '').toLowerCase();
-    if (typeStr.includes('out') || typeStr.includes('withdraw')) totalHeld += Number(m.amount);
-    if (typeStr.includes('in') || typeStr.includes('deposit')) totalHeld -= Number(m.amount);
-  });
+      const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+      const card = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden' });
+      
+      // FILTER: Only show manual counter entries. Exclude system-generated entries.
+      const systemKeywords = ['purchase po', 'payment to supplier', 'auto-payment', 'po:', 'tip payout', 'tip collected', 'bill payment', 'dues settlement'];
+      const personalMovements = movements.filter(m => {
+          const reason = (m.reason || '').toLowerCase();
+          return !systemKeywords.some(kw => reason.includes(kw));
+      });
+      
+      let totalIn = 0;
+      let totalOut = 0;
+      personalMovements.forEach(m => {
+        const typeStr = (m.movement_type || '').toLowerCase();
+        const isOut = typeStr.includes('out') || typeStr.includes('withdraw');
+        if (isOut) totalOut += Number(m.amount || 0);
+        else totalIn += Number(m.amount || 0);
+      });
+      const netBalance = totalOut - totalIn;
+      
+      const isAdmin = window.store?.state?.member?.role === 'admin';
 
-  let rowsHtml = movements.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).map(m => {
-    const typeStr = (m.movement_type || '').toLowerCase();
-    const isOut = typeStr.includes('out') || typeStr.includes('withdraw');
-    return `
-      <tr class="border-b border-slate-100 hover:bg-slate-50">
-        <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(m.created_at).toLocaleString('en-GB', {dateStyle:'short', timeStyle:'short'})}</td>
-        <td class="px-4 py-3 text-sm font-medium ${isOut ? 'text-red-600' : 'text-emerald-600'}">${isOut ? 'Cash Taken' : 'Cash Returned'}</td>
-        <td class="px-4 py-3 text-sm text-slate-700">${m.reason || '—'}</td>
-        <td class="px-4 py-3 text-sm text-right font-bold ${isOut ? 'text-red-600' : 'text-emerald-600'}">${isOut ? '-' : '+'}₹${Number(m.amount).toFixed(2)}</td>
-      </tr>
-    `;
-  }).join('');
-
-  card.innerHTML = `
-    <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-      <div>
-        <h3 class="font-bold text-xl text-slate-800">${name}'s Cash Ledger</h3>
-        <p class="text-sm text-slate-500 mt-1">Total Cash Held: <span class="font-bold text-red-600 text-lg ml-1">₹${totalHeld.toFixed(2)}</span></p>
-      </div>
-      <button class="text-slate-400 hover:text-slate-700 text-3xl leading-none" id="close-person-ledger">&times;</button>
-    </div>
-    <div class="overflow-y-auto flex-1 p-4">
-      <table class="w-full text-left border border-slate-200 rounded-lg overflow-hidden">
-        <thead class="bg-slate-50 text-xs text-slate-500 uppercase tracking-widest border-b border-slate-200">
-          <tr>
-            <th class="px-4 py-3 font-semibold">Date & Time</th>
-            <th class="px-4 py-3 font-semibold">Type</th>
-            <th class="px-4 py-3 font-semibold">Reason</th>
-            <th class="px-4 py-3 font-semibold text-right">Amount</th>
+      let rowsHtml = personalMovements.sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).map(m => {
+        const typeStr = (m.movement_type || '').toLowerCase();
+        const isOut = typeStr.includes('out') || typeStr.includes('withdraw');
+        const amount = Number(m.amount || 0).toFixed(2);
+        
+        return `
+          <tr class="border-b border-slate-100 hover:bg-slate-50">
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">${new Date(m.created_at).toLocaleString('en-GB', {dateStyle:'short', timeStyle:'short'})}</td>
+            <td class="px-4 py-3 text-sm text-slate-700">${m.reason || '—'}</td>
+            <td class="px-4 py-3 text-sm text-right font-bold ${isOut ? 'text-red-600' : 'text-slate-300'}">${isOut ? '₹' + amount : ''}</td>
+            <td class="px-4 py-3 text-sm text-right font-bold ${!isOut ? 'text-emerald-600' : 'text-slate-300'}">${!isOut ? '₹' + amount : ''}</td>
+            ${isAdmin ? `<td class="px-4 py-3 text-center">
+              <button class="delete-mv-btn text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1 rounded hover:bg-red-50 transition" data-id="${m.id}">Delete</button>
+            </td>` : ''}
           </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml || '<tr><td colspan="4" class="text-center py-6 text-slate-400">No movements found</td></tr>'}
-        </tbody>
-      </table>
-    </div>
-  `;
-  
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-  card.querySelector('#close-person-ledger').onclick = () => overlay.remove();
-}
+        `;
+      }).join('');
+
+      card.innerHTML = `
+        <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
+          <div>
+            <h3 class="font-bold text-xl text-slate-800">${name}'s Cash Ledger</h3>
+            <p class="text-sm text-slate-500 mt-1">Net Cash Held: <span class="font-bold ${netBalance > 0 ? 'text-red-600' : 'text-emerald-600'} text-lg ml-1">₹${Math.abs(netBalance).toFixed(2)}</span> ${netBalance > 0 ? '(Due)' : ''}</p>
+          </div>
+          <button class="text-slate-400 hover:text-slate-700 text-3xl leading-none" id="close-person-ledger">&times;</button>
+        </div>
+        <div class="overflow-y-auto flex-1">
+          <table class="w-full text-left">
+            <thead class="bg-slate-100 text-[10px] uppercase text-slate-600 sticky top-0 shadow-sm">
+              <tr>
+                <th class="px-4 py-3">Date & Time</th>
+                <th class="px-4 py-3">Reason</th>
+                <th class="px-4 py-3 text-right text-red-600">Debit (Out)</th>
+                <th class="px-4 py-3 text-right text-emerald-600">Credit (In)</th>
+                ${isAdmin ? '<th class="px-4 py-3 text-center">Action</th>' : ''}
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || `<tr><td colspan="${isAdmin ? 5 : 4}" class="text-center py-8 text-slate-400">No personal movements found.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <div class="p-3 border-t border-slate-200 bg-slate-50 shrink-0">
+          <button class="w-full py-2.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium text-sm transition" id="close-person-ledger-bottom">Close</button>
+        </div>
+      `;
+
+      overlay.appendChild(card);
+      document.body.appendChild(overlay);
+      
+      const close = () => overlay.remove();
+      card.querySelector('#close-person-ledger').onclick = close;
+      card.querySelector('#close-person-ledger-bottom').onclick = close;
+
+      // DELETE LOGIC
+      if (isAdmin) {
+        card.querySelectorAll('.delete-mv-btn').forEach(btn => {
+          btn.onclick = async (e) => {
+            if (!confirm('Are you sure you want to permanently delete this cash movement? This will also affect the Counter.')) return;
+            const mvId = e.currentTarget.getAttribute('data-id');
+            const btnEl = e.currentTarget;
+            btnEl.disabled = true;
+            btnEl.textContent = '...';
+            
+            try {
+              const { supabase } = await import('../../supabase-client.js');
+              const { error } = await supabase.from('cash_movements').delete().eq('id', mvId);
+              if (error) throw error;
+              
+              if (window.toast) window.toast('Entry deleted successfully', 'success');
+              overlay.remove();
+              window.location.reload(); // Reload to refresh all totals
+            } catch (err) {
+              if (window.toast) window.toast('Failed to delete: ' + err.message, 'error');
+              btnEl.disabled = false;
+              btnEl.textContent = 'Delete';
+            }
+          };
+        });
+      }
+    }
 
 export async function openBillReprintModal(invoiceId) {
   const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
