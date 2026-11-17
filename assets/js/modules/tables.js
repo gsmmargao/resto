@@ -517,12 +517,12 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                 return;
             }
 
-            body.innerHTML = [kots[0]].map(k => {
+            body.innerHTML = kots.map(k => {
                 const dateStr = new Date(k.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
                 
                 // Separate active and voided items
-                const activeItems = (orderItems || []).filter(it => it.status !== 'void' && it.status !== 'cancelled');
-                const voidedItems = (orderItems || []).filter(it => it.status === 'void' || it.status === 'cancelled');
+                const activeItems = (orderItems || []).filter(it => it.kot_id === k.id && it.status !== 'void' && it.status !== 'cancelled');
+                const voidedItems = (orderItems || []).filter(it => it.kot_id === k.id && (it.status === 'void' || it.status === 'cancelled'));
                 
                 // Calculate Total based ONLY on active items
                 const totalPrice = activeItems.reduce((sum, it) => sum + (Number(it.quantity) * Number(it.unit_price || 0)), 0);

@@ -12,7 +12,6 @@ const ORDER_SOURCE_VALUES  = new Set(['pos','qr','kiosk','whatsapp','website','p
 const KOT_STATUS_VALUES    = new Set(['pending','acknowledged','preparing','ready','served','cancelled']);
 
 export async function sendKOT() {
-  // 1. GLOBAL LOCK: Prevent double-clicks
   if (__isSendingKOT) {
       if (window.toast) window.toast('KOT is already processing. Please wait...', 'warn');
       return null;
@@ -31,7 +30,6 @@ export async function sendKOT() {
       return null; 
   }
   
-  // 2. INSTANT MARK: Lock items immediately to prevent a second request
   newItems.forEach(l => { l._saved = true; l.status = 'processing'; });
   window.dispatchEvent(new CustomEvent('cart:changed'));
 
@@ -45,24 +43,63 @@ export async function sendKOT() {
       subtotal: cart.totals.gross || 0, gross_total: cart.totals.gross || 0
   };
 
-  const itemsPayload = newItems.map(l => ({
-      tenant_id: tenant.id,
-      outlet_id: outlet.id,
-      menu_item_id: l.menuItemId, name_snapshot: l.name,
-      quantity: Number(l.qty), unit_price: Number(l.unitPrice),
-      notes: l.notes || null,
-      status: 'sent_to_kitchen' 
-  }));
+  // STRICT CLASSIFICATION LOGIC
+  const foodItems = [];
+  const barItems = [];
+  const skippedItems = [];
 
-  const kotPayload = {
-      id: crypto.randomUUID(),
-      tenant_id: tenant.id,
-      outlet_id: outlet.id,
-      kot_number: 'OFF-' + Date.now().toString().slice(-4),
-      table_name: tableRow?.name || 'Takeaway',
-      status: 'pending',
-      created_at: new Date().toISOString()
-  };
+  newItems.forEach(i => {
+      let cat = (i.categoryName || i.category_name || i.category || '').toLowerCase().trim();
+      
+      // 1. Look up real category from menu if missing
+      if (!cat || cat === 'unknown') {
+          const menuItem = (store.state.menuItems || []).find(m => String(m.id) === String(i.menuItemId));
+          if (menuItem) {
+              // CRITICAL FIX: Check food_category first!
+              cat = (menuItem.food_category || menuItem.category_name || menuItem.categoryName || menuItem.category || '').toLowerCase().trim();
+              if (!cat && menuItem.category_id) {
+                  const catObj = (store.state.categories || []).find(c => String(c.id) === String(menuItem.category_id));
+                  if (catObj) cat = (catObj.name || '').toLowerCase().trim();
+              }
+          }
+      }
+
+      // 2. Name-based fallback (safest for mocktails/water)
+      if (!cat || cat === 'unknown') {
+          const n = (i.name || '').toLowerCase();
+          if (/\b(soda|juice|mocktail|mojito|lemonade|cooler|shake)\b/.test(n)) cat = 'mocktail';
+          else if (/\b(water|cola|pepsi|coke|sprite|fanta|tea|coffee|beer|wine)\b/.test(n)) cat = 'beverage';
+          else cat = 'food';
+      }
+
+      let isBar = cat.includes('mocktail') || cat.includes('bar') || cat.includes('cocktail');
+      let isBeverage = cat.includes('beverage') || cat.includes('drink') || cat.includes('water');
+      
+      // 3. Check print_kot flag
+      let shouldPrint = i.print_kot;
+      if (shouldPrint === undefined) {
+          const menuItem = (store.state.menuItems || []).find(m => String(m.id) === String(i.menuItemId));
+          if (menuItem) shouldPrint = menuItem.print_kot !== false;
+      }
+
+      // 4. Route to correct bucket
+      if (shouldPrint === false || isBeverage) {
+          skippedItems.push(i);
+      } else if (isBar) {
+          barItems.push(i);
+      } else {
+          foodItems.push(i);
+      }
+  });
+
+  console.log('🔍 KOT Classification:', { 
+      Food: foodItems.map(i => i.name), 
+      Bar: barItems.map(i => i.name), 
+      Skipped: skippedItems.map(i => i.name) 
+  });
+
+  const foodKotId = foodItems.length > 0 ? crypto.randomUUID() : null;
+  const barKotId = barItems.length > 0 ? crypto.randomUUID() : null;
 
   try {
       let orderId = cart.orderId;
@@ -77,55 +114,75 @@ export async function sendKOT() {
           }).eq('id', orderId);
       }
 
-      itemsPayload.forEach(i => i.order_id = orderId);
+      const itemsPayload = newItems.map(l => {
+          const isBar = barItems.some(b => b.id === l.id);
+          const isFood = foodItems.some(f => f.id === l.id);
+          return {
+              tenant_id: tenant.id, outlet_id: outlet.id, order_id: orderId,
+              kot_id: isBar ? barKotId : (isFood ? foodKotId : null),
+              menu_item_id: l.menuItemId, name_snapshot: l.name,
+              quantity: Number(l.qty), unit_price: Number(l.unitPrice),
+              notes: l.notes || null, status: 'sent_to_kitchen' 
+          };
+      });
+      
       const { error: iErr } = await supabase.from('order_items').insert(itemsPayload);
       if (iErr) throw iErr;
 
-      kotPayload.order_id = orderId;
-      const { error: kErr } = await supabase.from('kots').insert([kotPayload]);
-      if (kErr) throw kErr;
+      if (foodKotId) {
+          await supabase.from('kots').insert([{
+              id: foodKotId, tenant_id: tenant.id, outlet_id: outlet.id,
+              kot_number: 'KIT-' + Date.now().toString().slice(-4),
+              table_name: tableRow?.name || 'Takeaway', status: 'pending', order_id: orderId
+          }]);
+      }
+      if (barKotId) {
+          await supabase.from('kots').insert([{
+              id: barKotId, tenant_id: tenant.id, outlet_id: outlet.id,
+              kot_number: 'BAR-' + Date.now().toString().slice(-4),
+              table_name: tableRow?.name || 'Takeaway', status: 'pending', order_id: orderId
+          }]);
+      }
 
-      // SUCCESS: Mark as sent
       newItems.forEach(l => { l.status = 'sent_to_kitchen'; });
       window.dispatchEvent(new CustomEvent('cart:changed'));
 
       if (CONFIG.LOCAL_SERVER_IP) {
-          const printItems = newItems.filter(i => {
-              let isBev = false;
-              const name = (i.name || '').toLowerCase();
-              const cat = (i.categoryName || i.category_name || i.category || '').toLowerCase();
-              const drinkWords = ['water', 'cola', 'soda', 'juice', 'drink', 'mojito', 'mocktail', 'tea', 'coffee', 'beer', 'wine', 'shake'];
-              if (drinkWords.some(w => name.includes(w))) isBev = true;
-              if (cat.includes('beverage') || cat.includes('drink') || cat.includes('mocktail')) isBev = true;
-              return !isBev;
-          });
-
-          if (printItems.length > 0) {
+          if (foodItems.length > 0) {
               fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                      kot: kotPayload.kot_number,
-                      items: printItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes })),
-                      tableName: kotPayload.table_name,
+                      kot: 'KIT-' + Date.now().toString().slice(-4),
+                      items: foodItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes })),
+                      tableName: tableRow?.name || 'Takeaway',
                       waiterName: member?.display_name
                   })
-              }).catch(err => console.error('❌ LAN Print error:', err));
+              }).catch(err => console.error('❌ Kitchen Print error:', err));
+          }
+          if (barItems.length > 0) {
+              fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                      kot: 'BAR-' + Date.now().toString().slice(-4),
+                      items: barItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes })),
+                      tableName: tableRow?.name || 'Takeaway',
+                      waiterName: member?.display_name
+                  })
+              }).catch(err => console.error('❌ Bar Print error:', err));
           }
       }
 
-      toast('KOT sent to kitchen', 'success');
+      toast('KOT sent successfully', 'success');
       return orderId;
   } catch (err) {
-      // FAILED: Revert the _saved flag so the user can try again
       newItems.forEach(l => { l._saved = false; l.status = null; });
       window.dispatchEvent(new CustomEvent('cart:changed'));
-
       console.error(err);
       toast('Failed to save order: ' + err.message, 'error');
       return null;
   } finally {
-      // 3. RELEASE LOCK: Always unlock the function when done
       __isSendingKOT = false;
   }
 }
