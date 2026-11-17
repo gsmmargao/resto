@@ -1,3 +1,26 @@
+
+/* POS CART OVERFLOW FIX */
+const style = document.createElement('style');
+style.innerHTML = `
+  #pos-cart-root {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    max-height: 100vh !important;
+    overflow: hidden !important;
+  }
+  #pos-cart-lines {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    min-height: 0 !important;
+  }
+  #pos-cart-actions {
+    flex-shrink: 0 !important;
+    padding-bottom: 90px !important; /* Lifts the Send KOT button 1 inch */
+  }
+`;
+document.head.appendChild(style);
+/* END POS CART OVERFLOW FIX */
 import { CONFIG } from '../../../config.js';
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
@@ -82,20 +105,29 @@ export function addToCart({ item, variant, addons = [], notes = '', qty = 1, cus
 }
 
 export function updateItemLine(lineId, qty, notes) {
-  const cart = store.state.cart;
-  const line = cart.items.find(l => l.id === lineId);
-  if (!line) return;
-  
-  if (qty <= 0) {
-      cart.items = cart.items.filter(l => l.id !== lineId);
-  } else {
-      line.qty = qty;
-      line.notes = notes;
-      line._key = `${line.menuItemId}::${line.variantId || ''}::${notes}`;
-  }
-  _computeTotals(cart);
-  notifyCartChanged();
-}
+        const cart = store.state.cart;
+        const line = cart.items.find(l => l.id === lineId);
+        if (!line) return;
+        
+        if (qty === 0) {
+            cart.items = cart.items.filter(l => l.id !== lineId);
+            if (line._saved && line._dbId) {
+                import('../supabase-client.js').then(({ supabase }) => {
+                    supabase.from('order_items').update({ status: 'void', notes: notes }).eq('id', line._dbId).then();
+                });
+            }
+        } else {
+            line.qty = qty;
+            line.notes = notes;
+            if (line._saved && line._dbId) {
+                 import('../supabase-client.js').then(({ supabase }) => {
+                     supabase.from('order_items').update({ quantity: qty, notes: notes }).eq('id', line._dbId).then();
+                 });
+            }
+        }
+        _computeTotals(cart);
+        notifyCartChanged();
+    }
 
 export function updateQty(lineId, qty) {
   const cart = store.state.cart;
@@ -255,7 +287,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
     ]) : null,
   ].filter(Boolean));
 
-  const lines = el('div', { class: 'bg-slate-50', id: 'cart-scroll-area', style: 'flex: 1; overflow-y: auto; min-height: 0;' });
+  const lines = el('div', { class: 'bg-slate-50', id: 'pos-cart-lines' });
   if (!cart.items.length) lines.appendChild(el('div', { class: 'p-6 text-center text-slate-400 text-sm' }, 'Cart is empty'));
   else cart.items.forEach(l => lines.appendChild(buildLine(l, onEditItem)));
 
@@ -278,7 +310,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
 
   const hasNewItems = cart.items.some(l => !l._saved);
   
-  const actions = el('div', { class: 'p-2 bg-white border-t border-slate-200 grid grid-cols-2 gap-2 shrink-0 z-10' }, [
+  const actions = el('div', { id: 'pos-cart-actions', class: 'p-2 bg-white border-t border-slate-200 grid grid-cols-2 gap-2 shrink-0 z-10' }, [
       // 1. Discard / Clear
       el('button', {
         class: 'py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition',

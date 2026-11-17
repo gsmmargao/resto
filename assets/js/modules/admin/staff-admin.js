@@ -93,11 +93,11 @@ function paint(root) {
         onclick: async () => { await refresh(); paint(root); toast('Refreshed', 'success', 1000); },
       }, 'Refresh'),
       null,
-      el('button', {
+      (store.state.member?.role === 'admin') ? el('button', {
         class: 'px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold',
         onclick: () => openCreateStaffModal(root),
-      }, '+ Create Staff'),
-    ]),
+      }, '+ Create Staff') : null,
+    ].filter(Boolean)),
   ]);
 
   const body = el('div', { class: 'flex-1 overflow-y-auto p-4 md:p-6' });
@@ -230,7 +230,7 @@ function buildMemberCard(member, root) {
   card.appendChild(meta2);
 
   const foot = el('div', { class: 'px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between' }, [
-    el('button', {
+    (store.state.member?.role === 'admin') ? el('button', {
       class: `text-[10px] font-semibold px-2 py-0.5 rounded-full ${member.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`,
       onclick: async (e) => {
         e.stopPropagation();
@@ -241,11 +241,11 @@ function buildMemberCard(member, root) {
         toast(next ? 'Activated' : 'Deactivated', 'success', 1200);
         paint(root);
       },
-    }, member.is_active ? '● ACTIVE' : '○ INACTIVE'),
-    el('button', {
+    }, member.is_active ? '● ACTIVE' : '○ INACTIVE') : null,
+    (store.state.member?.role === 'admin') ? el('button', {
       class: 'text-[10px] px-2 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-medium',
       onclick: (e) => { e.stopPropagation(); openMemberEditor(root, member); },
-    }, 'Edit'),
+    }, 'Edit') : null,
     // ADMIN ONLY DELETE BUTTON
     (store.state.member?.role === 'admin') ? el('button', {
       class: 'text-[10px] px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 font-medium ml-2',

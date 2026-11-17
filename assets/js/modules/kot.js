@@ -1,3 +1,5 @@
+let __isSendingKOT = false;
+
 import { supabase } from '../supabase-client.js';
 import { store } from '../store.js';
 import { toast } from '../utils.js';
@@ -10,14 +12,29 @@ const ORDER_SOURCE_VALUES  = new Set(['pos','qr','kiosk','whatsapp','website','p
 const KOT_STATUS_VALUES    = new Set(['pending','acknowledged','preparing','ready','served','cancelled']);
 
 export async function sendKOT() {
+  // 1. GLOBAL LOCK: Prevent double-clicks
+  if (__isSendingKOT) {
+      if (window.toast) window.toast('KOT is already processing. Please wait...', 'warn');
+      return null;
+  }
+  __isSendingKOT = true;
+
   const cart   = store.state.cart;
   const outlet = store.state.outlet;
   const tenant = store.state.tenant;
   const member = store.state.member;
 
   const newItems = cart.items.filter(l => !l._saved);
-  if (!newItems.length) { toast('No new items to send', 'warn'); return null; }
+  if (!newItems.length) { 
+      __isSendingKOT = false;
+      toast('No new items to send', 'warn'); 
+      return null; 
+  }
   
+  // 2. INSTANT MARK: Lock items immediately to prevent a second request
+  newItems.forEach(l => { l._saved = true; l.status = 'processing'; });
+  window.dispatchEvent(new CustomEvent('cart:changed'));
+
   const tableRow = store.state.tables.find(t => t.id === cart.tableId);
 
   const orderPayload = {
@@ -29,15 +46,12 @@ export async function sendKOT() {
   };
 
   const itemsPayload = newItems.map(l => ({
-      id: crypto.randomUUID(), // REQUIRED FOR SUPABASE
       tenant_id: tenant.id,
       outlet_id: outlet.id,
-      menu_item_id: l.menuItemId, 
-      name_snapshot: l.name,
-      quantity: Number(l.qty), 
-      unit_price: Number(l.unitPrice),
+      menu_item_id: l.menuItemId, name_snapshot: l.name,
+      quantity: Number(l.qty), unit_price: Number(l.unitPrice),
       notes: l.notes || null,
-      status: 'sent_to_kitchen' // REQUIRED SO CART CAN SEE IT
+      status: 'sent_to_kitchen' 
   }));
 
   const kotPayload = {
@@ -67,20 +81,24 @@ export async function sendKOT() {
       const { error: iErr } = await supabase.from('order_items').insert(itemsPayload);
       if (iErr) throw iErr;
 
-      // FIX: Mark items as saved IMMEDIATELY after DB insert, before KOT/Print
-      newItems.forEach(l => { l._saved = true; l.status = 'sent_to_kitchen'; });
+      kotPayload.order_id = orderId;
+      const { error: kErr } = await supabase.from('kots').insert([kotPayload]);
+      if (kErr) throw kErr;
+
+      // SUCCESS: Mark as sent
+      newItems.forEach(l => { l.status = 'sent_to_kitchen'; });
       window.dispatchEvent(new CustomEvent('cart:changed'));
 
-      // Try to save KOT separately. If it fails, items are still safe.
-      try {
-          kotPayload.order_id = orderId;
-          await supabase.from('kots').insert([kotPayload]);
-      } catch (kErr) {
-          console.warn('KOT header failed to save, but items are safe.', kErr);
-      }
-
       if (CONFIG.LOCAL_SERVER_IP) {
-          const printItems = newItems.filter(i => i.print_kot !== false);
+          const printItems = newItems.filter(i => {
+              let isBev = false;
+              const name = (i.name || '').toLowerCase();
+              const cat = (i.categoryName || i.category_name || i.category || '').toLowerCase();
+              const drinkWords = ['water', 'cola', 'soda', 'juice', 'drink', 'mojito', 'mocktail', 'tea', 'coffee', 'beer', 'wine', 'shake'];
+              if (drinkWords.some(w => name.includes(w))) isBev = true;
+              if (cat.includes('beverage') || cat.includes('drink') || cat.includes('mocktail')) isBev = true;
+              return !isBev;
+          });
 
           if (printItems.length > 0) {
               fetch(`https://${CONFIG.LOCAL_SERVER_IP}:3000/api/print-kot`, {
@@ -88,7 +106,7 @@ export async function sendKOT() {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                       kot: kotPayload.kot_number,
-                      items: printItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes, category: i.categoryName })),
+                      items: printItems.map(i => ({ name: i.name, quantity: i.qty, variant: i.variantName, notes: i.notes })),
                       tableName: kotPayload.table_name,
                       waiterName: member?.display_name
                   })
@@ -99,8 +117,15 @@ export async function sendKOT() {
       toast('KOT sent to kitchen', 'success');
       return orderId;
   } catch (err) {
+      // FAILED: Revert the _saved flag so the user can try again
+      newItems.forEach(l => { l._saved = false; l.status = null; });
+      window.dispatchEvent(new CustomEvent('cart:changed'));
+
       console.error(err);
       toast('Failed to save order: ' + err.message, 'error');
       return null;
+  } finally {
+      // 3. RELEASE LOCK: Always unlock the function when done
+      __isSendingKOT = false;
   }
 }
