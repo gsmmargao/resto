@@ -11,6 +11,9 @@ import { navigate } from '../router.js';
 let realtimeChannel = null;
 
 export async function renderDashboard(root) {
+  // FIX: Destroy old realtime channel to prevent stale closures
+  unsubscribeRealtime(); 
+
   const isWaiter = store.state.member?.role === 'waiter';
   root.innerHTML = '';
   
