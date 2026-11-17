@@ -558,22 +558,21 @@ function openPaymentPopup(orderId, totals, customer, tipAmount) {
               }];
           }
 
+          // FIX: Capture tableId BEFORE completePayment clears the cart
+          const tableIdToFree = window.store.state.cart.tableId;
+
           // 1. Process the payment (saves invoice, records payments, clears cart, navigates)
           await completePayment(orderId, totals, state.customer, payments, tipAmount);
           overlay.remove();
 
           // 2. Automatically release the table back to 'available'
-          const cart = window.store.state.cart;
-          if (cart.tableId) {
+          if (tableIdToFree) {
               // Update the database
-              await supabase.from('dining_tables').update({ status: 'available' }).eq('id', cart.tableId);
+              await supabase.from('dining_tables').update({ status: 'available' }).eq('id', tableIdToFree);
               
               // Update local state instantly so the floor plan turns green without a reload
-              const tableInState = window.store.state.tables.find(t => t.id === cart.tableId);
+              const tableInState = window.store.state.tables.find(t => t.id === tableIdToFree);
               if (tableInState) tableInState.status = 'available';
-              
-              // Reset the cart's tableId
-              window.store.state.cart.tableId = null;
               
               // Trigger the floor plan to re-render
               window.dispatchEvent(new CustomEvent('floorplan:reload'));
