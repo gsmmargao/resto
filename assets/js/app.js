@@ -60,7 +60,10 @@ function renderLogin(root) {
 
   async function doLogin() {
     btn.disabled = true; btn.textContent = 'Signing in…';
-    try { await signIn(email.value.trim(), pass.value); }
+    try { 
+        await signIn(email.value.trim(), pass.value); 
+        location.reload(); // FIX: Force redirect/reload to show dashboard
+    }
     catch (e) { toast(e.message || 'Sign-in failed', 'error'); }
     finally { btn.disabled = false; btn.textContent = 'Sign in'; }
   }
