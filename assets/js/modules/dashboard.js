@@ -206,6 +206,11 @@ function renderPOS(root) {
 
   const cartOpts = {
     onEditItem: (line) => {
+        if (window.store?.state?.member?.role === 'owner') {
+            if (window.toast) window.toast('Owner accounts cannot modify or remove items.', 'error');
+            return;
+        }
+
         const item = window.store.state.menuItems.find(m => String(m.id) === String(line.menuItemId));
         const variant = window.store.state.variants.find(v => v.id === line.variantId) || null;
         if (!item) { toast('Item not found', 'error'); return; }

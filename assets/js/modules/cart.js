@@ -315,6 +315,10 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
       el('button', {
         class: 'py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition',
         onclick: () => {
+          if (window.store?.state?.member?.role === 'owner') {
+            if (window.toast) window.toast('Owner accounts cannot modify orders.', 'error');
+            return;
+          }
           if (cart.orderId) {
             if (!hasNewItems) { toast('No new items to discard', 'warn'); return; }
             confirmDialog('Discard new items?', 'Confirm').then(ok => {
@@ -367,7 +371,7 @@ export function renderCartPanel(root, { onCheckout, onSendKOT, onClear, onPickTa
       }, `Checkout • ${fmtMoney(t.grand)}`) : null,
       
       // 4. Cancel Entire Order (Small text link)
-      cart.orderId ? el('button', {
+      (cart.orderId && window.store?.state?.member?.role !== 'owner') ? el('button', {
         class: 'col-span-2 text-[10px] text-red-500 hover:underline mt-1 py-1',
         onclick: () => openCancelOrderModal(onClear),
       }, 'Cancel Entire Order') : null

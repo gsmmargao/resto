@@ -32,14 +32,6 @@ export function navigate(name, params = {}, retries = 20) {
           history.replaceState({ route: 'dashboard', params: {} }, '', '#dashboard');
       }
   }
-  // OWNER GUARD: Prevent access to POS
-  if (role === 'owner' && (name === 'pos' || name === 'dashboard')) {
-      console.warn(`[router] Owner restricted from "${name}". Redirecting to reports...`);
-      name = 'reports';
-      if (location.hash !== '#reports') {
-          history.replaceState({ route: 'reports', params: {} }, '', '#reports');
-      }
-  }
   // -------------------------
 
   if (!routerState.routes.has(name)) { 

@@ -77,7 +77,7 @@ export function renderTablesView(root, onPickTable) {
   });
 
   const userRole = window.store?.state?.member?.role;
-  if (userRole !== 'waiter' && userRole !== 'owner') {
+  if (userRole !== 'waiter') {
       tables.unshift({
           id: 'NEW_TAKEAWAY_TRIGGER',
           name: '+ Takeaway',
@@ -337,11 +337,6 @@ function buildCard(table, openOrder, onPickTable) {
           window.store.state.cart.tableName = displayName;
       }
       
-      
-      if (window.store?.state?.member?.role === 'owner') {
-          if (window.toast) window.toast('Owner accounts cannot create or modify orders.', 'error');
-          return;
-      }
       if (typeof onPickTable === 'function') onPickTable(table, openOrder);
     },
   }, [
@@ -595,7 +590,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                         <div class="px-4 py-2 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
                             <div class="text-sm font-bold text-slate-800">Total: ₹${totalPrice.toFixed(2)}</div>
                             <div class="flex items-center gap-3">
-                                ${!k.is_virtual ? `<button class="text-blue-500 hover:text-blue-700 transition btn-edit" data-id="${k.id}" title="Edit KOT">
+                                ${(!k.is_virtual && window.store?.state?.member?.role !== 'owner') ? `<button class="text-blue-500 hover:text-blue-700 transition btn-edit" data-id="${k.id}" title="Edit KOT">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                 </button>` : ''}
                                 <button class="text-slate-600 hover:text-slate-900 transition btn-print" data-id="${k.id}" title="Print KOT">

@@ -12,6 +12,12 @@ const ORDER_SOURCE_VALUES  = new Set(['pos','qr','kiosk','whatsapp','website','p
 const KOT_STATUS_VALUES    = new Set(['pending','acknowledged','preparing','ready','served','cancelled']);
 
 export async function sendKOT() {
+  // OWNER GUARD: Block owners from sending KOTs
+  if (store.state.member?.role === 'owner') {
+      if (window.toast) window.toast('Owner accounts cannot send orders to the kitchen.', 'error');
+      return null;
+  }
+
   if (__isSendingKOT) {
       if (window.toast) window.toast('KOT is already processing. Please wait...', 'warn');
       return null;
