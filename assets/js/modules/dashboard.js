@@ -129,11 +129,24 @@ async function refreshOpenOrders() {
   if (!outletId) return;
   const { data } = await supabase
     .from('orders')
-    .select('id, order_number, table_id, table_name_snapshot, status, grand_total, placed_at, guest_count, customer_name, order_type')
+    .select('id, order_number, table_id, table_name_snapshot, status, grand_total, placed_at, guest_count, customer_name, order_type, order_items(name_snapshot, quantity)')
     .eq('outlet_id', outletId)
     .in('status', ['open','in_kitchen','partially_ready','ready','served','billed','partially_paid'])
     .order('placed_at', { ascending: false });
   store.set('openOrders', data || []);
+
+  // VALIDATION: Clear ghost cart if the order is no longer open/existing in the DB
+  const currentCart = store.state.cart;
+  if (currentCart && currentCart.orderId) {
+      const orderExists = (data || []).some(o => o.id === currentCart.orderId);
+      if (!orderExists) {
+          console.log('[Cart Validation] Ghost order detected. The order was paid or deleted. Clearing cart.');
+          if (typeof clearCart === 'function') {
+              clearCart();
+              window.dispatchEvent(new CustomEvent('cart:changed'));
+          }
+      }
+  }
 }
 
 async function openOrderIntoCart(orderId, orderNumber, action = 'pos') {
@@ -305,13 +318,14 @@ function renderOrders(root) {
       }, [
         el('div', { class: 'flex justify-between items-start' }, [
           el('div', {}, [
-            el('div', { class: 'font-semibold text-slate-800' }, `#${o.order_number}`),
+            el('div', { class: 'font-semibold text-slate-800' }, o.table_name_snapshot ? o.table_name_snapshot.split(' - ')[0] : `#${o.order_number}`),
             el('div', { class: 'text-xs text-slate-500 mt-0.5 capitalize' },
-              `${o.order_type.replace('_',' ')}${o.table_name_snapshot ? ' • ' + o.table_name_snapshot : ''}`),
+              `${o.order_type.replace('_',' ')}${o.table_name_snapshot ? ' • ' + o.table_name_snapshot.split(' - ')[0] : ''}`),
           ]),
           el('span', { class: 'text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 capitalize' },
             o.status.replace('_',' ')),
         ]),
+        el('div', { class: 'mt-2 space-y-1' }, (o.order_items || []).map(it => el('div', { class: 'text-xs text-slate-600 truncate' }, `${it.quantity}x ${it.name_snapshot}`))),
         el('div', { class: 'flex justify-between items-end mt-3' }, [
           el('div', { class: 'text-lg font-semibold text-slate-900' }, fmtMoney(o.grand_total || 0)),
           el('div', { class: 'text-xs text-slate-500' }, fmtRelative(o.placed_at) + ' ago'),

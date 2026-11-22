@@ -63,7 +63,7 @@ export function renderTablesView(root, onPickTable) {
 
   const firstAreaId = areas[0]?.id || tables[0]?.area_id || 'unassigned';
 
-  const activeTakeaways = openOrders.filter(o => o.order_type === 'takeaway');
+  const activeTakeaways = openOrders.filter(o => o.order_type === 'takeaway' || !o.table_id);
   activeTakeaways.forEach(o => {
       tables.push({
           id: o.id,
@@ -76,14 +76,17 @@ export function renderTablesView(root, onPickTable) {
       });
   });
 
-  tables.unshift({
-      id: 'NEW_TAKEAWAY_TRIGGER',
-      name: '+ Takeaway',
-      capacity: 1,
-      status: 'available',
-      area_id: firstAreaId,
-      is_trigger: true
-  });
+  const userRole = window.store?.state?.member?.role;
+  if (userRole !== 'waiter') {
+      tables.unshift({
+          id: 'NEW_TAKEAWAY_TRIGGER',
+          name: '+ Takeaway',
+          capacity: 1,
+          status: 'available',
+          area_id: firstAreaId,
+          is_trigger: true
+      });
+  }
 
   if (!tables.length) {
     body.appendChild(el('div', { class: 'text-center text-slate-500 py-20 text-sm' }, 'No tables configured'));
@@ -100,7 +103,14 @@ export function renderTablesView(root, onPickTable) {
       body.appendChild(el('div', { class: 'mb-6' }, [
         el('h3', { class: 'text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3' }, areaName),
         el('div', { class: 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 md:gap-3' },
-          list.map(t => buildCard(t, openByTable.get(t.id) || t._openOrder, onPickTable))),
+          list.sort((a, b) => {
+            // If both tables have x/y coordinates from Floor Admin, sort by Y then X
+            if (a.x != null && a.y != null && b.x != null && b.y != null) {
+                return (a.y - b.y) || (a.x - b.x);
+            }
+            // Otherwise, sort naturally by name (M1, M2, M3...)
+            return (a.name || '').localeCompare(b.name || '', undefined, { numeric: true });
+          }).map(t => buildCard(t, openByTable.get(t.id) || t._openOrder, onPickTable))),
       ]));
     });
   }

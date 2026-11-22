@@ -185,7 +185,7 @@ async function refreshAll(grid, empty) {
   if (state.kots.length) {
     const kotIds = state.kots.map(k => k.id);
     const { data: items, error: iErr } = await supabase
-      .from('kot_items')
+      .from('order_items')
       .select('*')
       .in('kot_id', kotIds);
     if (iErr) console.error(iErr);
@@ -224,6 +224,7 @@ function paintGrid(grid, empty) {
 
 
 function buildCard(kot) {
+  const label = (kot.status || 'pending').toUpperCase();
   const items  = state.itemsByKot.get(kot.id) || [];
   const ageMin = (Date.now() - new Date(kot.created_at).getTime()) / 60000;
 
@@ -242,7 +243,7 @@ function buildCard(kot) {
 
   const top = el('div', { class: 'px-3 py-2 flex items-center justify-between border-b border-slate-700' }, [
     el('div', { class: 'flex items-center gap-2 min-w-0' }, [
-      el('span', { class: 'font-bold text-lg leading-none' }, `#${kot.kot_number}`),
+      el('span', { class: 'font-bold text-lg leading-none' }, (kot.order_type === 'dine_in' || !kot.order_type) ? (kot.table_name || 'Dine-in') : String(kot.order_type).replace('_',' ')),
       el('span', { class: `text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${badge}` }, kot.status),
     ]),
     el('div', { class: 'text-right' }, [
@@ -272,56 +273,17 @@ function buildCard(kot) {
 
   const footer = el('div', { class: 'p-2 border-t border-slate-700 bg-slate-900/50' });
 
-  if (kot.status === 'pending') {
-    footer.appendChild(actionBtn('Acknowledge', 'bg-amber-500 hover:bg-amber-400 text-black', () => advance(kot, 'acknowledged')));
-  } else if (kot.status === 'acknowledged') {
-    footer.appendChild(actionBtn('Start Cooking', 'bg-indigo-500 hover:bg-indigo-400', () => advance(kot, 'preparing')));
-  } else if (kot.status === 'preparing') {
-    footer.appendChild(actionBtn('Mark Ready', 'bg-emerald-500 hover:bg-emerald-400 text-black', () => advance(kot, 'ready')));
-  } else if (kot.status === 'ready') {
-    footer.appendChild(actionBtn('Served / Bumped', 'bg-sky-500 hover:bg-sky-400 text-black', () => advance(kot, 'served')));
-  }
+      if (kot.status === 'pending') {
+        footer.appendChild(el('button', { class: 'w-full py-2 rounded font-bold text-sm bg-amber-500 hover:bg-amber-400 text-black transition', onclick: () => advance(kot, 'acknowledged') }, 'Acknowledge'));
+      } else if (kot.status === 'acknowledged') {
+        footer.appendChild(el('button', { class: 'w-full py-2 rounded font-bold text-sm bg-indigo-500 hover:bg-indigo-400 text-white transition', onclick: () => advance(kot, 'ready') }, 'Ready'));
+      } else if (kot.status === 'ready') {
+        footer.appendChild(el('button', { class: 'w-full py-2 rounded font-bold text-sm bg-sky-500 hover:bg-sky-400 text-white transition', onclick: () => advance(kot, 'served') }, 'Served / Bumped'));
+      }
 
-  card.appendChild(footer);
-  return card;
-}
-
-function actionBtn(label, cls, onClick) {
-  return el('button', {
-    class: `w-full py-3 rounded-lg font-semibold text-sm transition ${cls}`,
-    onclick: (e) => {
-      e.currentTarget.disabled = true;
-      e.currentTarget.textContent = '…';
-      onClick();
-    },
-  }, label);
-}
-
-async function advance(kot, newStatus) {
-  const now = new Date().toISOString();
-  const patch = { status: newStatus };
-  if (newStatus === 'acknowledged') patch.acknowledged_at = now;
-  if (newStatus === 'preparing')    patch.acknowledged_at = kot.acknowledged_at || now;
-  if (newStatus === 'ready')        patch.ready_at = now;
-  if (newStatus === 'served')       patch.served_at = now;
-
-  const { error } = await supabase.from('kots').update(patch).eq('id', kot.id);
-  if (error) { toast('Failed: ' + error.message, 'error'); return; }
-
-  const itemPatch = { status: newStatus };
-  if (newStatus === 'preparing') itemPatch.started_at = now;
-  if (newStatus === 'ready')     itemPatch.ready_at   = now;
-  await supabase.from('kot_items').update(itemPatch).eq('kot_id', kot.id);
-
-  kot.status = newStatus;
-  Object.assign(kot, patch);
-  if (newStatus === 'served') {
-    state.kots = state.kots.filter(k => k.id !== kot.id);
-  }
-  paintGrid(
-    document.getElementById('kds-grid'),
-    document.getElementById('kds-empty'),
-  );
+      card.appendChild(footer);
+      
+      return card;
 }
 
 function subscribe(grid, empty) {
@@ -414,5 +376,33 @@ function toggleFullscreen() {
     document.documentElement.requestFullscreen?.().catch(() => {});
   } else {
     document.exitFullscreen?.().catch(() => {});
+  }
+}
+
+
+async function advance(kot, newStatus) {
+  try {
+    const { error } = await supabase
+      .from('kots')
+      .update({ status: newStatus })
+      .eq('id', kot.id);
+
+    if (error) throw error;
+
+    if (newStatus === 'served') {
+      // Remove served KOT from local state instantly
+      state.kots = state.kots.filter(k => k.id !== kot.id);
+    } else {
+      // Update local status
+      const existing = state.kots.find(k => k.id === kot.id);
+      if (existing) existing.status = newStatus;
+    }
+
+    // Re-render the grid
+    paintGrid(document.getElementById('kds-grid'), document.getElementById('kds-empty'));
+
+  } catch (err) {
+    console.error('Failed to advance KOT status:', err);
+    alert('Failed to update status. Please check the console.');
   }
 }

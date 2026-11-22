@@ -19,6 +19,9 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  // Ignore requests from browser extensions (chrome-extension://, etc.)
+  if (!event.request.url.startsWith('http')) return;
+
   // Do NOT intercept API calls (Supabase, Print, etc.) or non-GET requests
   if (event.request.method !== 'GET' || event.request.url.includes('/api/') || event.request.url.includes('supabase.co')) {
     return;
