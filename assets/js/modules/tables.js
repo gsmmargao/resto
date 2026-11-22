@@ -77,7 +77,7 @@ export function renderTablesView(root, onPickTable) {
   });
 
   const userRole = window.store?.state?.member?.role;
-  if (userRole !== 'waiter') {
+  if (userRole !== 'waiter' && userRole !== 'owner') {
       tables.unshift({
           id: 'NEW_TAKEAWAY_TRIGGER',
           name: '+ Takeaway',
@@ -337,6 +337,11 @@ function buildCard(table, openOrder, onPickTable) {
           window.store.state.cart.tableName = displayName;
       }
       
+      
+      if (window.store?.state?.member?.role === 'owner') {
+          if (window.toast) window.toast('Owner accounts cannot create or modify orders.', 'error');
+          return;
+      }
       if (typeof onPickTable === 'function') onPickTable(table, openOrder);
     },
   }, [
