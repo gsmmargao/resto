@@ -52,10 +52,12 @@ export async function renderKOTs() {
       const tableName = tableNameRaw.split(' - ')[0];
 
       tr.innerHTML = '<td class="px-4 py-3"><div class="font-medium">' + dateStr + '</div><div class="text-xs text-slate-400">' + timeStr + '</div></td>' +
-        '<td class="px-4 py-3 font-semibold text-slate-800">KOT-' + k.kot_number + '</td>' +
+        '<td class="px-4 py-3 font-semibold text-slate-800"><span class="kot-link text-indigo-600 hover:underline cursor-pointer">KOT-' + k.kot_number + '</span></td>' +
         '<td class="px-4 py-3 font-medium">' + tableName + '</td>' +
         '<td class="px-4 py-3"><span class="px-2 py-1 rounded text-xs font-semibold bg-' + (k.status === 'ready' ? 'emerald' : 'amber') + '-100 text-' + (k.status === 'ready' ? 'emerald' : 'amber') + '-700">' + k.status.toUpperCase() + '</span></td>' +
         '<td class="px-4 py-3 text-right"><button class="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-xs font-semibold border border-blue-200 transition">Print</button></td>';
+
+      tr.querySelector('.kot-link').onclick = () => showKotDetails(k.id, k.kot_number, tableName);
 
       tr.querySelector('button').onclick = async (e) => {
         const btn = e.currentTarget;
@@ -63,7 +65,7 @@ export async function renderKOTs() {
         btn.innerHTML = 'Printing...';
         btn.disabled = true;
         try {
-          const { data: items } = await supabase.from('kot_items').select('*').eq('kot_id', k.id);
+          const { data: items } = await supabase.from('order_items').select('*').eq('kot_id', k.id);
           const payload = {
             kot: k.kot_number,
             items: (items || []).map(it => ({ quantity: it.quantity, name: it.name_snapshot, variant: it.variant_name, notes: it.notes })),
@@ -96,4 +98,33 @@ export async function renderKOTs() {
     wrapper.innerHTML = '<div class="text-red-500 p-4 font-mono text-sm border border-red-200 bg-red-50 rounded-lg">Error loading KOTs: ' + err.message + '</div>';
     return wrapper;
   }
+}
+
+
+async function showKotDetails(kotId, kotNumber, tableName) {
+  const { data: items } = await supabase.from('order_items').select('*').eq('kot_id', kotId);
+  
+  const overlay = el('div', { class: 'fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4' });
+  const modal = el('div', { class: 'bg-white rounded-xl shadow-2xl w-full max-w-sm flex flex-col max-h-[80vh] overflow-hidden' }, [
+      el('div', { class: 'px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-slate-50' }, [
+          el('div', {}, [
+              el('div', { class: 'font-bold text-slate-800' }, 'KOT-' + kotNumber),
+              el('div', { class: 'text-xs text-slate-500' }, tableName)
+          ]),
+          el('button', { class: 'text-slate-400 hover:text-slate-700 text-lg font-bold', onclick: () => overlay.remove() }, '✕')
+      ]),
+      el('div', { class: 'p-4 overflow-y-auto' }, 
+          !items || !items.length ? el('div', { class: 'text-center text-slate-500 text-sm py-4' }, 'No items found for this KOT.') :
+          items.map(it => el('div', { class: 'flex justify-between py-2 border-b border-slate-100 last:border-0' }, [
+              el('div', {}, [
+                  el('div', { class: 'font-medium text-sm text-slate-800' }, it.name_snapshot),
+                  it.variant_name ? el('div', { class: 'text-xs text-slate-500' }, it.variant_name) : null,
+                  it.notes ? el('div', { class: 'text-xs italic text-amber-600' }, '↳ ' + it.notes) : null,
+              ].filter(Boolean)),
+              el('div', { class: 'font-bold text-slate-800 text-sm whitespace-nowrap ml-4' }, 'x' + it.quantity)
+          ]))
+      )
+  ]);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }

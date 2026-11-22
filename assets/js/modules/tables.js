@@ -611,7 +611,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                     if (!kot) return;
                     const payload = {
                         kot: kot.kot_number,
-                        items: (orderItems || []).filter(it => it.status !== 'void').map(it => ({ quantity: it.quantity, name: it.name_snapshot, variant: it.variant_name, notes: it.notes })),
+                        items: (orderItems || []).filter(it => it.kot_id === kot.id && it.status !== 'void' && it.status !== 'cancelled').map(it => ({ quantity: it.quantity, name: it.name_snapshot, variant: it.variant_name, notes: it.notes })),
                         tableName: currentTableName, waiterName: 'admin'
                     };
                     try {
@@ -629,7 +629,7 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                     if (typeof onPickTable === 'function') await onPickTable(getTableObj(currentOrder, currentTableName), currentOrder);
                     setTimeout(() => {
                         const cart = window.store.state.cart;
-                        (orderItems || []).filter(it => it.status !== 'void').forEach(it => {
+                        (orderItems || []).filter(it => it.kot_id === kot.id && it.status !== 'void' && it.status !== 'cancelled').forEach(it => {
                             const existing = cart.items.find(i => i.item_id === it.order_item_id);
                             if (existing) existing.qty += Number(it.quantity);
                             else cart.items.push({ item_id: it.order_item_id, name: it.name_snapshot, price: Number(it.unit_price || 0), qty: Number(it.quantity), tax_rate: 0 });
