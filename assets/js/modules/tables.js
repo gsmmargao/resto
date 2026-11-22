@@ -512,12 +512,23 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
 
             
             
-            if (!kots || !kots.length) {
+            let finalKots = kots || [];
+            const orphanedItems = (orderItems || []).filter(it => !it.kot_id);
+            if (orphanedItems.length > 0) {
+                finalKots.push({
+                    id: 'virtual-kot',
+                    kot_number: 'LEGACY / UNPRINTED',
+                    created_at: orderItems[0]?.created_at || new Date().toISOString(),
+                    is_virtual: true
+                });
+            }
+
+            if (!finalKots.length) {
                 body.innerHTML = '<div class="text-center py-10 text-slate-400">No KOTs found for this order.</div>';
                 return;
             }
 
-            body.innerHTML = kots.map(k => {
+            body.innerHTML = finalKots.map(k => {
                 const dateStr = new Date(k.created_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' });
                 
                 // Separate active and voided items
@@ -569,9 +580,9 @@ export async function openViewKOTsModal(initialOrder, initialTableName, onPickTa
                         <div class="px-4 py-2 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
                             <div class="text-sm font-bold text-slate-800">Total: ₹${totalPrice.toFixed(2)}</div>
                             <div class="flex items-center gap-3">
-                                <button class="text-blue-500 hover:text-blue-700 transition btn-edit" data-id="${k.id}" title="Edit KOT">
+                                ${!k.is_virtual ? `<button class="text-blue-500 hover:text-blue-700 transition btn-edit" data-id="${k.id}" title="Edit KOT">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                                </button>
+                                </button>` : ''}
                                 <button class="text-slate-600 hover:text-slate-900 transition btn-print" data-id="${k.id}" title="Print KOT">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                                 </button>

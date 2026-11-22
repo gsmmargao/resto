@@ -108,12 +108,10 @@ function renderShell(root) {
         el('button', {
           class: 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium transition',
           onclick: () => {
-          navigate('dashboard');
-          setTimeout(() => {
-            const tabs = Array.from(document.querySelectorAll('button'));
-            const tablesBtn = tabs.find(b => b.textContent.trim().toLowerCase() === 'tables');
-            if (tablesBtn) tablesBtn.click();
-          }, 100);
+          if (window.store && window.store.state && window.store.state.cart) {
+            window.store.state.cart.tableId = null;
+        }
+        navigate('dashboard');
         },
         }, '← Exit to POS'),
         el('span', { class: 'text-slate-300 hidden sm:inline ml-2' }, store.state.profile?.full_name || store.state.session?.user?.email || ''),
@@ -137,12 +135,10 @@ function renderShell(root) {
       // WAITER gets minimal tabs
       if (role === 'waiter') {
         navBtns.push(el('button', { class: navBtnCls, onclick: () => {
-          navigate('dashboard');
-          setTimeout(() => {
-            const tabs = Array.from(document.querySelectorAll('button'));
-            const tablesBtn = tabs.find(b => b.textContent.trim().toLowerCase() === 'tables');
-            if (tablesBtn) tablesBtn.click();
-          }, 100);
+          if (window.store && window.store.state && window.store.state.cart) {
+            window.store.state.cart.tableId = null;
+        }
+        navigate('dashboard');
         } }, 'POS'));
       } 
       // STORE KEEPER gets only Stock Balance
@@ -156,12 +152,10 @@ function renderShell(root) {
       // OWNER / MANAGER / CASHIER get normal tabs
       else {
         navBtns.push(el('button', { class: navBtnCls, onclick: () => {
-          navigate('dashboard');
-          setTimeout(() => {
-            const tabs = Array.from(document.querySelectorAll('button'));
-            const tablesBtn = tabs.find(b => b.textContent.trim().toLowerCase() === 'tables');
-            if (tablesBtn) tablesBtn.click();
-          }, 100);
+          if (window.store && window.store.state && window.store.state.cart) {
+            window.store.state.cart.tableId = null;
+        }
+        navigate('dashboard');
         } }, 'POS'));
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('kds') }, 'Kitchen'));
         navBtns.push(el('button', { class: navBtnCls, onclick: () => navigate('cash') }, 'Counter'));

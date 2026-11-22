@@ -279,7 +279,7 @@ export async function closeShift({ countedCash, notes, totals, movements, expect
 // MAIN VIEW
 // ============================================================
 export async function renderCash(root) {
-  root.innerHTML = '';
+  // Removed early root.innerHTML = '' to prevent race condition
   await loadOpenShift();
 
   const wrap = el('div', { class: 'h-full overflow-auto bg-slate-100 p-4 md:p-6' });
@@ -298,6 +298,7 @@ export async function renderCash(root) {
   inner.appendChild(await renderHistoryPanel());
 
   wrap.appendChild(inner);
+  root.innerHTML = ''; // Clear screen ONLY at the final moment
   root.appendChild(wrap);
   subscribeRealtime(root);
 }

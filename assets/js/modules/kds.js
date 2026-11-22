@@ -221,6 +221,8 @@ function paintGrid(grid, empty) {
   filtered.forEach(kot => grid.appendChild(buildCard(kot)));
 }
 
+
+
 function buildCard(kot) {
   const items  = state.itemsByKot.get(kot.id) || [];
   const ageMin = (Date.now() - new Date(kot.created_at).getTime()) / 60000;
@@ -246,7 +248,7 @@ function buildCard(kot) {
     el('div', { class: 'text-right' }, [
       el('div', { class: 'font-mono text-sm text-slate-300' }, formatElapsed(ageMin)),
       el('div', { class: 'text-[10px] text-slate-500 leading-tight' },
-        kot.order_type === 'dine_in' ? (kot.table_name || 'Dine-in') : kot.order_type.replace('_',' ')),
+        (kot.order_type === 'dine_in' || !kot.order_type) ? (kot.table_name || 'Dine-in') : String(kot.order_type).replace('_',' ')),
     ]),
   ]);
   card.appendChild(top);
